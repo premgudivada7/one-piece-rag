@@ -1,7 +1,7 @@
-# one-piece-rag
+# One Piece — RAG Project
 
+## Team Members
 
-
-Aravind reddy Kolan
-Prem siva naga sai ram kumar Gudivada
-Praveen kumar Koppula
+1. Aravind Reddy Kolan
+2. Prem Siva Naga Sai Ram Kumar Gudivada
+3. Praveen Kumar Koppula
