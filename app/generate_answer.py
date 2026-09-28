@@ -1,10 +1,13 @@
 import os
+
+from dotenv import load_dotenv
 from openai import OpenAI
 
 
 # Load OpenAI API key from .env / environment
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+load_dotenv()
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """
 You are an AI Regulation RAG assistant.

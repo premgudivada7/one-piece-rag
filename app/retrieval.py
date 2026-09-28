@@ -17,7 +17,7 @@ INDEX_FILE = DATA_DIR / "my_index.faiss"
 
 MODEL = "text-embedding-3-small"
 DIMENSIONS = 1536
-TOP_K = 5
+TOP_K = 15
 
 # ---------- Load data ----------
 
