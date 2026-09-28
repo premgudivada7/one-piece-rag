@@ -1,0 +1,13 @@
+# Python environment
+.venv/
+.env
+
+# Corpus documents and generated JSON
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS files
+.DS_Store
