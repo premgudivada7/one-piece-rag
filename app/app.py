@@ -12,7 +12,6 @@ FALLBACK_MESSAGE = (
     "documents to answer this question."
 )
 
-
 EXAMPLES = [
     "What are the four core functions of the NIST AI RMF?",
     "How does Article 3 of the EU AI Act define risk?",
@@ -22,35 +21,40 @@ EXAMPLES = [
 
 
 # =========================================================
-# FORMAT AGENT TRACE AS MARKDOWN
+# FORMAT AGENT TRACE
 # =========================================================
 
 def format_agent_trace(trace: list) -> str:
+    """
+    Display observable agent actions:
+    - searches
+    - queries
+    - retrieval results
+    - pages
+    - similarity scores
+    - final status
+    """
 
     if not trace:
-
         return (
             "### 🤖 Agent Steps\n\n"
             "No agent actions recorded."
         )
 
-
     lines = [
         "### 🤖 Agent Steps",
         "",
-        "This panel shows the agent's **tool and retrieval actions**.",
+        "This shows the agent's **tool and retrieval actions**.",
         "",
     ]
 
-
     step_number = 1
-
 
     for event in trace:
 
-        # =================================================
+        # -------------------------------------------------
         # SEARCH
-        # =================================================
+        # -------------------------------------------------
 
         if event["type"] == "search":
 
@@ -58,83 +62,68 @@ def format_agent_trace(trace: list) -> str:
                 f"#### {step_number}. 🔍 Search Attempt "
                 f"{event['attempt']}"
             )
-
             lines.append("")
 
             lines.append(
-                f"**Tool:** `{event['tool']}`"
+                f"**Tool:** `{event.get('tool', 'search_corpus')}`"
             )
-
             lines.append("")
 
             lines.append(
-                f"**Query:** `{event['query']}`"
+                f"**Query:** `{event.get('query', '')}`"
             )
-
             lines.append("")
 
             lines.append(
-                f"**Top K:** {event['k']}"
+                f"**Top K:** {event.get('k', 5)}"
             )
-
             lines.append("")
 
             step_number += 1
 
-
-        # =================================================
-        # RETRIEVAL
-        # =================================================
+        # -------------------------------------------------
+        # RETRIEVAL SUCCESS
+        # -------------------------------------------------
 
         elif event["type"] == "retrieval":
 
             lines.append(
                 f"#### {step_number}. 📚 Retrieval Result"
             )
-
             lines.append("")
+
+            matches = event.get("matches", [])
 
             lines.append(
-                f"Found **{event['count']} passages**."
+                f"Found **{event.get('count', len(matches))} passages**."
             )
-
             lines.append("")
 
-
-            # Get unique pages
             pages = []
-
-            # Get unique documents
             documents = []
 
+            for match in matches:
 
-            for match in event["matches"]:
+                page = match.get("page")
+                source = match.get("source")
 
-                page = match["page"]
-                source = match["source"]
-
-                if page not in pages:
+                if page is not None and page not in pages:
                     pages.append(page)
 
-                if source not in documents:
+                if source and source not in documents:
                     documents.append(source)
 
-
             if documents:
-
                 lines.append(
                     "**Document:** "
                     + ", ".join(
-                        f"`{doc}`"
-                        for doc in documents
+                        f"`{document}`"
+                        for document in documents
                     )
                 )
-
                 lines.append("")
 
-
             if pages:
-
                 lines.append(
                     "**Pages retrieved:** "
                     + ", ".join(
@@ -142,126 +131,136 @@ def format_agent_trace(trace: list) -> str:
                         for page in pages
                     )
                 )
+                lines.append("")
+
+            if matches:
+
+                lines.append("**Retrieved matches:**")
+                lines.append("")
+
+                for number, match in enumerate(
+                    matches,
+                    start=1
+                ):
+
+                    lines.append(
+                        f"- Match {number}: "
+                        f"`{match.get('source', 'Unknown')}` — "
+                        f"page **{match.get('page', '?')}** — "
+                        f"score **{match.get('score', '?')}**"
+                    )
 
                 lines.append("")
 
-
-            # Show each retrieved match
-            lines.append(
-                "**Retrieved matches:**"
-            )
-
-            lines.append("")
-
-
-            for number, match in enumerate(
-                event["matches"],
-                start=1
-            ):
-
-                lines.append(
-                    f"- Match {number}: "
-                    f"`{match['source']}` — "
-                    f"page **{match['page']}** — "
-                    f"score **{match['score']}**"
-                )
-
-
-            lines.append("")
-
             step_number += 1
 
-
-        # =================================================
-        # RETRIEVAL FAILED
-        # =================================================
+        # -------------------------------------------------
+        # RETRIEVAL FAILURE
+        # -------------------------------------------------
 
         elif event["type"] == "retrieval_failed":
 
             lines.append(
                 f"#### {step_number}. ⚠️ Retrieval Insufficient"
             )
-
             lines.append("")
 
             lines.append(
-                event["message"]
+                event.get(
+                    "message",
+                    "No useful passages were found."
+                )
             )
-
             lines.append("")
 
             lines.append(
-                "The agent can reformulate the search query."
+                "The agent may try a different search query."
             )
-
             lines.append("")
 
             step_number += 1
 
-
-        # =================================================
+        # -------------------------------------------------
         # FINAL ANSWER
-        # =================================================
+        # -------------------------------------------------
 
         elif event["type"] == "final":
 
             lines.append(
                 f"#### {step_number}. ✅ Final Answer"
             )
-
             lines.append("")
 
             lines.append(
                 f"**Searches performed:** "
-                f"{event['search_count']}"
+                f"{event.get('search_count', 0)}"
             )
-
             lines.append("")
 
             lines.append(
-                event["message"]
+                event.get(
+                    "message",
+                    "Final answer generated."
+                )
             )
-
             lines.append("")
 
             step_number += 1
 
-
-        # =================================================
+        # -------------------------------------------------
         # NO SEARCH
-        # =================================================
+        # -------------------------------------------------
 
         elif event["type"] == "no_search":
 
             lines.append(
                 f"#### {step_number}. 🚫 No Document Search"
             )
-
             lines.append("")
 
             lines.append(
-                event["message"]
+                event.get(
+                    "message",
+                    "No document search was performed."
+                )
             )
-
             lines.append("")
 
             step_number += 1
 
+        # -------------------------------------------------
+        # SEARCH LIMIT
+        # -------------------------------------------------
+
+        elif event["type"] == "limit":
+
+            lines.append(
+                f"#### {step_number}. 🛑 Search Limit"
+            )
+            lines.append("")
+
+            lines.append(
+                event.get(
+                    "message",
+                    "Maximum search attempts reached."
+                )
+            )
+            lines.append("")
+
+            step_number += 1
 
     return "\n".join(lines)
 
 
 # =========================================================
-# CHAT LOGIC
+# CHAT
 # =========================================================
 
 def respond(message: str, history: list):
 
-    message = (
-        message
-        or ""
-    ).strip()
+    message = (message or "").strip()
 
+    history = history or []
 
     if not message:
 
@@ -273,68 +272,69 @@ def respond(message: str, history: list):
 
         return
 
+    # Make a copy of the history
+    history = [
+        dict(item)
+        for item in history
+    ]
 
-    # =====================================================
-    # ADD USER MESSAGE
-    # =====================================================
-
-    history = history + [
+    # Add user question
+    history.append(
         {
             "role": "user",
             "content": message
-        },
+        }
+    )
 
+    # Temporary assistant message
+    history.append(
         {
             "role": "assistant",
             "content": "🤖 Agent is working..."
         }
-    ]
+    )
 
-
-    # Show working status
+    # Show immediately
     yield (
         "",
         history,
         (
             "### 🤖 Agent Steps\n\n"
-            "⏳ The agent is deciding whether to search "
-            "the document corpus..."
+            "⏳ The agent is deciding whether it needs "
+            "to search the documents..."
         )
     )
 
-
     try:
 
-        # =================================================
+        # -------------------------------------------------
         # RUN AGENT
-        # =================================================
+        # -------------------------------------------------
 
         final_message, trace = run_agent(
             message
         )
 
+        answer = final_message.content
 
-        answer = (
-            final_message.content
-            or FALLBACK_MESSAGE
-        )
+        if not answer:
+            answer = FALLBACK_MESSAGE
 
+        answer = answer.strip()
 
-        # =================================================
-        # FINAL CHAT ANSWER
-        # =================================================
+        # -------------------------------------------------
+        # PUT ONLY ANSWER IN CHAT
+        # -------------------------------------------------
 
         history[-1]["content"] = answer
 
-
-        # =================================================
-        # AGENT TRACE
-        # =================================================
+        # -------------------------------------------------
+        # PUT STEPS IN SEPARATE PANEL
+        # -------------------------------------------------
 
         trace_markdown = format_agent_trace(
             trace
         )
-
 
         yield (
             "",
@@ -342,20 +342,19 @@ def respond(message: str, history: list):
             trace_markdown
         )
 
-
     except Exception as error:
 
         history[-1]["content"] = (
-            f"⚠️ Something went wrong: {error}"
+            "⚠️ Something went wrong while running the agent."
         )
-
 
         yield (
             "",
             history,
             (
                 "### 🤖 Agent Steps\n\n"
-                "❌ An error occurred while running the agent."
+                "❌ Agent error:\n\n"
+                f"`{str(error)}`"
             )
         )
 
@@ -427,7 +426,9 @@ body,
 }
 
 
-/* HEADER */
+/* =======================================================
+   HEADER
+   ======================================================= */
 
 #hero {
     background:
@@ -439,7 +440,11 @@ body,
         );
 
     border-radius: 20px;
+
     padding: 26px 30px;
+
+    margin-bottom: 14px;
+
     color: white;
 
     box-shadow:
@@ -469,53 +474,50 @@ body,
 #hero .pill {
     display: inline-block;
 
-    margin:
-        12px 8px 0 0;
+    margin: 12px 8px 0 0;
 
-    padding:
-        4px 12px;
+    padding: 4px 12px;
 
-    border-radius:
-        999px;
+    border-radius: 999px;
 
-    font-size:
-        .8rem;
+    font-size: .8rem;
 
-    font-weight:
-        600;
+    font-weight: 600;
 
-    color:
-        white !important;
+    color: white !important;
 
     background:
-        rgba(255,255,255,.16);
+        rgba(255, 255, 255, .16);
 
     border:
         1px solid
-        rgba(255,255,255,.3);
+        rgba(255, 255, 255, .3);
 }
 
 
-/* CHAT */
+/* =======================================================
+   CHAT
+   ======================================================= */
 
 #chat {
-    border-radius:
-        18px !important;
+    border-radius: 18px !important;
 
     border:
         1px solid
         #e0e7ff !important;
 
-    box-shadow:
-        0 6px 24px
-        rgba(15,23,42,.06);
-
     background:
         white !important;
+
+    box-shadow:
+        0 6px 24px
+        rgba(15, 23, 42, .06);
 }
 
 
-/* AGENT PANEL */
+/* =======================================================
+   AGENT PANEL
+   ======================================================= */
 
 #agent-panel {
     background:
@@ -529,11 +531,11 @@ body,
         16px !important;
 
     padding:
-        8px 18px !important;
+        10px 18px !important;
 
     box-shadow:
         0 5px 20px
-        rgba(79,70,229,.07);
+        rgba(79, 70, 229, .07);
 }
 
 
@@ -567,7 +569,9 @@ body,
 }
 
 
-/* INPUT */
+/* =======================================================
+   INPUT
+   ======================================================= */
 
 #input-row {
     background:
@@ -585,7 +589,7 @@ body,
 
     box-shadow:
         0 4px 16px
-        rgba(79,70,229,.08);
+        rgba(79, 70, 229, .08);
 }
 
 
@@ -595,7 +599,9 @@ body,
 }
 
 
-/* EXAMPLES */
+/* =======================================================
+   EXAMPLES
+   ======================================================= */
 
 #examples button {
     border-radius:
@@ -629,10 +635,9 @@ with gr.Blocks(
     title="AI Regulation Assistant"
 ) as demo:
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # HEADER
-    # =====================================================
+    # -----------------------------------------------------
 
     gr.HTML(
         """
@@ -647,8 +652,8 @@ with gr.Blocks(
                 <b>EU AI Act</b>
                 and
                 <b>NIST AI Risk Management Framework</b>.
-                The Agent Steps panel shows how the
-                assistant searches the documents.
+                The agent can decide when and how to
+                search the documents.
             </p>
 
             <span class="pill">
@@ -668,31 +673,28 @@ with gr.Blocks(
     )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # CHATBOT
-    # =====================================================
+    # -----------------------------------------------------
 
     chatbot = gr.Chatbot(
         elem_id="chat",
-
         height=500,
-
         show_label=False,
 
         placeholder=(
             "<div style='text-align:center;color:#64748b'>"
             "<div style='font-size:2.4rem'>🤖</div>"
             "<b>Ask your first question</b><br>"
-            "The answer appears here and the agent actions "
-            "appear below."
+            "The final answer appears here."
             "</div>"
         ),
     )
 
 
-    # =====================================================
-    # AGENT STEPS PANEL
-    # =====================================================
+    # -----------------------------------------------------
+    # AGENT STEPS
+    # -----------------------------------------------------
 
     with gr.Accordion(
         "🤖 Agent Steps",
@@ -709,9 +711,9 @@ with gr.Blocks(
         )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # INPUT
-    # =====================================================
+    # -----------------------------------------------------
 
     with gr.Row(
         elem_id="input-row",
@@ -752,9 +754,9 @@ with gr.Blocks(
         )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # EXAMPLES
-    # =====================================================
+    # -----------------------------------------------------
 
     gr.Markdown(
         "**Try one of these:**"
@@ -775,43 +777,43 @@ with gr.Blocks(
         ]
 
 
-    # =====================================================
-    # ENTER KEY
-    # =====================================================
+    # -----------------------------------------------------
+    # ENTER
+    # -----------------------------------------------------
 
     enter_event = question.submit(
         respond,
 
-        [
+        inputs=[
             question,
             chatbot
         ],
 
-        [
+        outputs=[
             question,
             chatbot,
             agent_steps
-        ]
+        ],
     )
 
 
-    # =====================================================
-    # SEND BUTTON
-    # =====================================================
+    # -----------------------------------------------------
+    # SEND
+    # -----------------------------------------------------
 
     send_event = send.click(
         respond,
 
-        [
+        inputs=[
             question,
             chatbot
         ],
 
-        [
+        outputs=[
             question,
             chatbot,
             agent_steps
-        ]
+        ],
     )
 
 
@@ -821,42 +823,42 @@ with gr.Blocks(
     ]
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # EXAMPLE BUTTONS
-    # =====================================================
+    # -----------------------------------------------------
 
     for button in example_buttons:
 
-        event = button.click(
+        example_event = button.click(
             use_example,
 
-            [
+            inputs=[
                 button,
                 chatbot
             ],
 
-            [
+            outputs=[
                 question,
                 chatbot,
                 agent_steps
-            ]
+            ],
         )
 
         ask_events.append(
-            event
+            example_event
         )
 
 
-    # =====================================================
-    # CLEAR BUTTON
-    # =====================================================
+    # -----------------------------------------------------
+    # CLEAR
+    # -----------------------------------------------------
 
     clear.click(
         clear_all,
 
-        None,
+        inputs=None,
 
-        [
+        outputs=[
             question,
             chatbot,
             agent_steps
@@ -869,7 +871,7 @@ with gr.Blocks(
 
 
 # =========================================================
-# FORCE LIGHT THEME
+# FORCE LIGHT MODE
 # =========================================================
 
 FORCE_LIGHT = """
@@ -901,7 +903,7 @@ FORCE_LIGHT = """
 
 if __name__ == "__main__":
 
-    demo.launch(
+    demo.queue().launch(
         theme=THEME,
         css=CSS,
         js=FORCE_LIGHT
