@@ -1,16 +1,17 @@
-import html
-import re
-
 import gradio as gr
 
-from retrieval import load_data, retrieve
-from generate_answer import generate_answer
+from agent import run_agent
 
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
 FALLBACK_MESSAGE = (
     "I don't have enough information in the provided "
     "documents to answer this question."
 )
+
 
 EXAMPLES = [
     "What are the four core functions of the NIST AI RMF?",
@@ -19,398 +20,889 @@ EXAMPLES = [
     "What is the difference between a provider and a deployer?",
 ]
 
-SOURCE_LABELS = {
-    "eu_ai_act_2024.pdf": ("EU AI Act", "src-eu"),
-    "nist_ai_rmf_1_0.pdf": ("NIST AI RMF", "src-nist"),
-}
 
+# =========================================================
+# FORMAT AGENT TRACE AS MARKDOWN
+# =========================================================
 
-# ---------- Formatting helpers ----------
+def format_agent_trace(trace: list) -> str:
 
-def cited_numbers(answer: str, total: int) -> list[int]:
-    """Return citation numbers like [2] or [1, 3] used in the answer."""
-    numbers = []
+    if not trace:
 
-    for group in re.findall(r"\[([\d,\s]+)\]", answer):
-        for part in group.split(","):
-            part = part.strip()
-            if part.isdigit():
-                n = int(part)
-                if 1 <= n <= total and n not in numbers:
-                    numbers.append(n)
-
-    return sorted(numbers)
-
-
-def doc_info(source: str) -> tuple[str, str]:
-    """Return a friendly document name and its colour class."""
-    return SOURCE_LABELS.get(source, (source, "src-other"))
-
-
-def total_passages() -> int:
-    """How many passages the search index holds."""
-    try:
-        chunks, _ = load_data()
-        return len(chunks)
-    except Exception:
-        return 0
-
-
-def format_origin(chunks: list[dict], numbers: list[int]) -> str:
-    """Show which documents and pages the answer was built from."""
-    cited = set(numbers)
-    total = total_passages()
-
-    # ---- Step-by-step trace ----
-    trace = (
-        '<div class="trace">'
-        f'<span class="step">🔎 Searched <b>{total:,}</b> passages</span>'
-        '<span class="arrow">→</span>'
-        f'<span class="step">🎯 <b>{len(chunks)}</b> closest matches</span>'
-        '<span class="arrow">→</span>'
-        f'<span class="step used">✅ <b>{len(cited)}</b> used in this answer</span>'
-        "</div>"
-    )
-
-    # ---- Documents and pages, grouped ----
-    by_doc: dict[str, dict] = {}
-    for i, chunk in enumerate(chunks, start=1):
-        doc = by_doc.setdefault(chunk["source"], {"cited": [], "other": []})
-        bucket = "cited" if i in cited else "other"
-        if chunk["page"] not in doc[bucket]:
-            doc[bucket].append(chunk["page"])
-
-    rows = []
-    # Documents that were actually cited come first.
-    for source, pages in sorted(
-        by_doc.items(), key=lambda item: -len(item[1]["cited"])
-    ):
-        label, css_class = doc_info(source)
-        other = [p for p in pages["other"] if p not in pages["cited"]]
-        cited_chips = "".join(
-            f'<span class="page-chip cited">p. {p}</span>'
-            for p in sorted(pages["cited"])
-        )
-        other_chips = "".join(
-            f'<span class="page-chip">p. {p}</span>' for p in sorted(other)
-        )
-        status = (
-            '<span class="doc-status yes">used</span>'
-            if pages["cited"]
-            else '<span class="doc-status no">searched, not used</span>'
-        )
-        rows.append(
-            f'<div class="doc-row {css_class}">'
-            f'<div class="doc-name"><span class="src-badge">{label}</span>{status}</div>'
-            f'<div class="doc-pages">{cited_chips}{other_chips}</div>'
-            "</div>"
+        return (
+            "### 🤖 Agent Steps\n\n"
+            "No agent actions recorded."
         )
 
-    origin = (
-        '<div class="origin"><div class="origin-title">'
-        "🧭 Where this answer comes from</div>"
-        f"{trace}{''.join(rows)}"
-        '<div class="legend"><span class="page-chip cited">p. N</span> cited in the answer '
-        '&nbsp; <span class="page-chip">p. N</span> retrieved but not cited</div>'
-        "</div>"
-    )
 
-    # ---- Full text of every cited reference ----
-    cards = []
-    for n in numbers:
-        chunk = chunks[n - 1]
-        label, css_class = doc_info(chunk["source"])
-        text = html.escape(chunk["text"].replace("\n", " "))
-        cards.append(
-            f'<div class="src-card {css_class}">'
-            f'<div class="src-head"><span class="src-num">[{n}]</span>'
-            f'<span class="src-badge">{label}</span>'
-            f'<span class="src-page">Page {chunk["page"]}</span>'
-            f'<span class="src-score">match {chunk["score"]:.2f}</span></div>'
-            f'<div class="src-text">“{text}”</div>'
-            "</div>"
-        )
-
-    references = (
-        '<details class="src-box" open><summary>📌 References used '
-        f"({len(numbers)})</summary>{''.join(cards)}</details>"
-        if cards
-        else ""
-    )
-
-    # ---- Everything the search returned ----
-    all_rows = []
-    for i, chunk in enumerate(chunks, start=1):
-        label, css_class = doc_info(chunk["source"])
-        mark = "✅" if i in cited else "▫️"
-        snippet = html.escape(chunk["text"][:150].replace("\n", " "))
-        all_rows.append(
-            f'<div class="all-row {css_class}{" is-cited" if i in cited else ""}">'
-            f'<span class="all-mark">{mark}</span>'
-            f'<span class="src-num">[{i}]</span>'
-            f'<span class="src-badge">{label}</span>'
-            f'<span class="src-page">p. {chunk["page"]}</span>'
-            f'<span class="src-score">{chunk["score"]:.2f}</span>'
-            f'<div class="all-snippet">{snippet}…</div>'
-            "</div>"
-        )
-
-    retrieved = (
-        '<details class="src-box"><summary>🗂️ All retrieved passages '
-        f"({len(chunks)}) — click to expand</summary>{''.join(all_rows)}</details>"
-    )
-
-    return origin + references + retrieved
+    lines = [
+        "### 🤖 Agent Steps",
+        "",
+        "This panel shows the agent's **tool and retrieval actions**.",
+        "",
+    ]
 
 
-def highlight_citations(answer: str) -> str:
-    """Turn [1] into small coloured citation pills."""
-    return re.sub(
-        r"\[([\d,\s]+)\]",
-        lambda m: f'<span class="cite">{m.group(1).strip()}</span>',
-        answer,
-    )
+    step_number = 1
 
 
-# ---------- Chat logic ----------
+    for event in trace:
+
+        # =================================================
+        # SEARCH
+        # =================================================
+
+        if event["type"] == "search":
+
+            lines.append(
+                f"#### {step_number}. 🔍 Search Attempt "
+                f"{event['attempt']}"
+            )
+
+            lines.append("")
+
+            lines.append(
+                f"**Tool:** `{event['tool']}`"
+            )
+
+            lines.append("")
+
+            lines.append(
+                f"**Query:** `{event['query']}`"
+            )
+
+            lines.append("")
+
+            lines.append(
+                f"**Top K:** {event['k']}"
+            )
+
+            lines.append("")
+
+            step_number += 1
+
+
+        # =================================================
+        # RETRIEVAL
+        # =================================================
+
+        elif event["type"] == "retrieval":
+
+            lines.append(
+                f"#### {step_number}. 📚 Retrieval Result"
+            )
+
+            lines.append("")
+
+            lines.append(
+                f"Found **{event['count']} passages**."
+            )
+
+            lines.append("")
+
+
+            # Get unique pages
+            pages = []
+
+            # Get unique documents
+            documents = []
+
+
+            for match in event["matches"]:
+
+                page = match["page"]
+                source = match["source"]
+
+                if page not in pages:
+                    pages.append(page)
+
+                if source not in documents:
+                    documents.append(source)
+
+
+            if documents:
+
+                lines.append(
+                    "**Document:** "
+                    + ", ".join(
+                        f"`{doc}`"
+                        for doc in documents
+                    )
+                )
+
+                lines.append("")
+
+
+            if pages:
+
+                lines.append(
+                    "**Pages retrieved:** "
+                    + ", ".join(
+                        str(page)
+                        for page in pages
+                    )
+                )
+
+                lines.append("")
+
+
+            # Show each retrieved match
+            lines.append(
+                "**Retrieved matches:**"
+            )
+
+            lines.append("")
+
+
+            for number, match in enumerate(
+                event["matches"],
+                start=1
+            ):
+
+                lines.append(
+                    f"- Match {number}: "
+                    f"`{match['source']}` — "
+                    f"page **{match['page']}** — "
+                    f"score **{match['score']}**"
+                )
+
+
+            lines.append("")
+
+            step_number += 1
+
+
+        # =================================================
+        # RETRIEVAL FAILED
+        # =================================================
+
+        elif event["type"] == "retrieval_failed":
+
+            lines.append(
+                f"#### {step_number}. ⚠️ Retrieval Insufficient"
+            )
+
+            lines.append("")
+
+            lines.append(
+                event["message"]
+            )
+
+            lines.append("")
+
+            lines.append(
+                "The agent can reformulate the search query."
+            )
+
+            lines.append("")
+
+            step_number += 1
+
+
+        # =================================================
+        # FINAL ANSWER
+        # =================================================
+
+        elif event["type"] == "final":
+
+            lines.append(
+                f"#### {step_number}. ✅ Final Answer"
+            )
+
+            lines.append("")
+
+            lines.append(
+                f"**Searches performed:** "
+                f"{event['search_count']}"
+            )
+
+            lines.append("")
+
+            lines.append(
+                event["message"]
+            )
+
+            lines.append("")
+
+            step_number += 1
+
+
+        # =================================================
+        # NO SEARCH
+        # =================================================
+
+        elif event["type"] == "no_search":
+
+            lines.append(
+                f"#### {step_number}. 🚫 No Document Search"
+            )
+
+            lines.append("")
+
+            lines.append(
+                event["message"]
+            )
+
+            lines.append("")
+
+            step_number += 1
+
+
+    return "\n".join(lines)
+
+
+# =========================================================
+# CHAT LOGIC
+# =========================================================
 
 def respond(message: str, history: list):
-    """Add the question to the chat, then stream in the answer."""
-    message = (message or "").strip()
+
+    message = (
+        message
+        or ""
+    ).strip()
+
 
     if not message:
-        yield "", history
+
+        yield (
+            "",
+            history,
+            "### 🤖 Agent Steps\n\nWaiting for a question..."
+        )
+
         return
+
+
+    # =====================================================
+    # ADD USER MESSAGE
+    # =====================================================
 
     history = history + [
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": "🔍 *Searching the documents…*"},
+        {
+            "role": "user",
+            "content": message
+        },
+
+        {
+            "role": "assistant",
+            "content": "🤖 Agent is working..."
+        }
     ]
-    yield "", history
+
+
+    # Show working status
+    yield (
+        "",
+        history,
+        (
+            "### 🤖 Agent Steps\n\n"
+            "⏳ The agent is deciding whether to search "
+            "the document corpus..."
+        )
+    )
+
 
     try:
-        chunks = retrieve(message)
 
-        history[-1]["content"] = "✍️ *Writing the answer…*"
-        yield "", history
+        # =================================================
+        # RUN AGENT
+        # =================================================
 
-        answer = generate_answer(message, chunks)
+        final_message, trace = run_agent(
+            message
+        )
 
-    except Exception as error:  # Show errors in the chat, not a crash.
+
+        answer = (
+            final_message.content
+            or FALLBACK_MESSAGE
+        )
+
+
+        # =================================================
+        # FINAL CHAT ANSWER
+        # =================================================
+
+        history[-1]["content"] = answer
+
+
+        # =================================================
+        # AGENT TRACE
+        # =================================================
+
+        trace_markdown = format_agent_trace(
+            trace
+        )
+
+
+        yield (
+            "",
+            history,
+            trace_markdown
+        )
+
+
+    except Exception as error:
+
         history[-1]["content"] = (
-            f'<div class="error-msg">⚠️ Something went wrong: '
-            f"{html.escape(str(error))}</div>"
-        )
-        yield "", history
-        return
-
-    if answer.strip().strip('"') == FALLBACK_MESSAGE:
-        content = (
-            '<div class="no-info">🤷 I couldn’t find this in the '
-            "EU AI Act or the NIST AI RMF. Try rephrasing, or ask "
-            "about something these documents cover.</div>"
-        )
-    else:
-        numbers = cited_numbers(answer, len(chunks))
-        content = (
-            highlight_citations(answer)
-            + "\n\n" + format_origin(chunks, numbers)
+            f"⚠️ Something went wrong: {error}"
         )
 
-    history[-1]["content"] = content
-    yield "", history
 
+        yield (
+            "",
+            history,
+            (
+                "### 🤖 Agent Steps\n\n"
+                "❌ An error occurred while running the agent."
+            )
+        )
+
+
+# =========================================================
+# EXAMPLE BUTTON
+# =========================================================
 
 def use_example(example: str, history: list):
-    """Clicking an example chip asks it straight away."""
-    yield from respond(example, history)
+
+    yield from respond(
+        example,
+        history
+    )
 
 
-# ---------- Styling ----------
+# =========================================================
+# CLEAR
+# =========================================================
+
+def clear_all():
+
+    return (
+        "",
+        [],
+        (
+            "### 🤖 Agent Steps\n\n"
+            "Ask a question to see the agent's actions."
+        )
+    )
+
+
+# =========================================================
+# THEME
+# =========================================================
 
 THEME = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="teal",
     neutral_hue="slate",
-    font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
+    font=[
+        gr.themes.GoogleFont("Inter"),
+        "system-ui",
+        "sans-serif"
+    ],
 )
 
+
+# =========================================================
+# CSS
+# =========================================================
+
 CSS = """
-.gradio-container { max-width: 980px !important; margin: 0 auto !important; }
-body, .gradio-container {
-    background: linear-gradient(160deg, #eef2ff 0%, #f0fdfa 55%, #fdf4ff 100%) !important;
+
+.gradio-container {
+    max-width: 1050px !important;
+    margin: 0 auto !important;
 }
+
+body,
+.gradio-container {
+    background:
+        linear-gradient(
+            160deg,
+            #eef2ff 0%,
+            #f0fdfa 55%,
+            #fdf4ff 100%
+        ) !important;
+}
+
+
+/* HEADER */
 
 #hero {
-    background: linear-gradient(120deg, #312e81 0%, #4f46e5 50%, #0d9488 100%);
-    border-radius: 20px; padding: 26px 30px; color: white;
-    box-shadow: 0 12px 30px rgba(79, 70, 229, .25);
+    background:
+        linear-gradient(
+            120deg,
+            #312e81 0%,
+            #4f46e5 50%,
+            #0d9488 100%
+        );
+
+    border-radius: 20px;
+    padding: 26px 30px;
+    color: white;
+
+    box-shadow:
+        0 12px 30px
+        rgba(79, 70, 229, .25);
 }
-#hero h1 { color: white; margin: 0 0 6px; font-size: 1.9rem; }
-#hero p  { color: #e0e7ff !important; margin: 0; font-size: 1rem; }
-#hero b, #hero .pill { color: white !important; }
+
+
+#hero h1 {
+    color: white;
+    margin: 0 0 6px;
+    font-size: 1.9rem;
+}
+
+
+#hero p {
+    color: #e0e7ff !important;
+    margin: 0;
+}
+
+
+#hero b {
+    color: white !important;
+}
+
+
 #hero .pill {
-    display: inline-block; margin: 12px 8px 0 0; padding: 4px 12px;
-    border-radius: 999px; font-size: .8rem; font-weight: 600;
-    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.3);
+    display: inline-block;
+
+    margin:
+        12px 8px 0 0;
+
+    padding:
+        4px 12px;
+
+    border-radius:
+        999px;
+
+    font-size:
+        .8rem;
+
+    font-weight:
+        600;
+
+    color:
+        white !important;
+
+    background:
+        rgba(255,255,255,.16);
+
+    border:
+        1px solid
+        rgba(255,255,255,.3);
 }
 
-#chat { border-radius: 18px !important; border: 1px solid #e0e7ff !important;
-        box-shadow: 0 6px 24px rgba(15, 23, 42, .06); background: white !important; }
-#chat .message.user, #chat [data-testid="user"] {
-    background: linear-gradient(120deg, #4f46e5, #6366f1) !important;
-    color: white !important; border: none !important;
+
+/* CHAT */
+
+#chat {
+    border-radius:
+        18px !important;
+
+    border:
+        1px solid
+        #e0e7ff !important;
+
+    box-shadow:
+        0 6px 24px
+        rgba(15,23,42,.06);
+
+    background:
+        white !important;
 }
-#chat [data-testid="user"] * { color: white !important; }
-#chat [data-testid="bot"] {
-    background: #f8fafc !important; border: 1px solid #e2e8f0 !important;
+
+
+/* AGENT PANEL */
+
+#agent-panel {
+    background:
+        white !important;
+
+    border:
+        1px solid
+        #c7d2fe !important;
+
+    border-radius:
+        16px !important;
+
+    padding:
+        8px 18px !important;
+
+    box-shadow:
+        0 5px 20px
+        rgba(79,70,229,.07);
 }
 
-.cite {
-    display: inline-block; min-width: 1.4em; padding: 0 6px; margin: 0 1px;
-    border-radius: 999px; font-size: .72rem; font-weight: 700; line-height: 1.5;
-    text-align: center; background: #e0e7ff; color: #3730a3; vertical-align: 2px;
+
+#agent-panel h3 {
+    color:
+        #3730a3 !important;
 }
 
-.src-box { margin-top: 10px; }
-.src-box summary { cursor: pointer; font-weight: 600; color: #475569; margin-bottom: 6px; }
-.src-card { border-radius: 12px; padding: 10px 12px; margin: 8px 0;
-            border-left: 5px solid; background: white; }
-.src-eu    { border-color: #2563eb; background: #eff6ff; }
-.src-nist  { border-color: #0d9488; background: #f0fdfa; }
-.src-other { border-color: #9333ea; background: #faf5ff; }
-.src-head  { font-size: .82rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.src-num   { font-weight: 700; color: #334155; }
-.src-badge { color: white !important; padding: 2px 9px; border-radius: 999px; color: white; font-weight: 600; font-size: .72rem; }
-.src-eu .src-badge    { background: #2563eb; }
-.src-nist .src-badge  { background: #0d9488; }
-.src-other .src-badge { background: #9333ea; }
-.src-page  { color: #475569; font-weight: 600; }
-.src-score { color: #94a3b8; margin-left: auto; }
-.src-text  { font-size: .85rem; color: #334155; margin-top: 6px; line-height: 1.5; }
 
-#chat [data-testid="bot"], #chat .answer { color: #0f172a !important; }
-.answer { font-size: 1rem; line-height: 1.6; margin-bottom: 12px; }
+#agent-panel h4 {
+    color:
+        #0f766e !important;
 
-.origin { background: linear-gradient(135deg, #eef2ff, #f0fdfa); border: 1px solid #c7d2fe;
-          border-radius: 14px; padding: 12px 14px; margin: 6px 0 10px; }
-.origin-title { font-weight: 700; color: #312e81; margin-bottom: 8px; }
-.trace { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; font-size: .82rem; }
-.trace .step { background: white; border: 1px solid #e0e7ff; border-radius: 999px; padding: 3px 10px; color: #334155; }
-.trace .step.used { background: #dcfce7; border-color: #86efac; color: #166534; }
-.trace .arrow { color: #818cf8; font-weight: 700; }
-.doc-row { background: white; border-radius: 10px; padding: 8px 10px; margin: 6px 0; border-left: 5px solid #9333ea; }
-.doc-row.src-eu, .all-row.src-eu { border-left-color: #2563eb; }
-.doc-row.src-nist, .all-row.src-nist { border-left-color: #0d9488; }
-.doc-name { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-.doc-status { font-size: .72rem; font-weight: 600; border-radius: 999px; padding: 1px 8px; }
-.doc-status.yes { background: #dcfce7; color: #166534; }
-.doc-status.no  { background: #f1f5f9; color: #64748b; }
-.doc-pages { display: flex; flex-wrap: wrap; gap: 4px; }
-.page-chip { font-size: .72rem; padding: 1px 8px; border-radius: 6px; background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
-.page-chip.cited { background: #4f46e5; color: white !important; border-color: #4f46e5; font-weight: 700; }
-.legend { font-size: .72rem; color: #64748b; margin-top: 8px; }
+    margin-top:
+        18px !important;
+}
 
-.all-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 10px;
-           border-radius: 8px; margin: 4px 0; background: white; border-left: 4px solid #9333ea; font-size: .8rem; }
-.all-row.is-cited { background: #f0fdf4; }
-.all-snippet { flex-basis: 100%; color: #64748b; font-size: .76rem; }
 
-.no-info   { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
-             border-radius: 12px; padding: 10px 14px; }
-.error-msg { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
-             border-radius: 12px; padding: 10px 14px; }
+#agent-panel code {
+    background:
+        #eef2ff !important;
 
-#input-row { background: white; border-radius: 16px; padding: 8px;
-             border: 1px solid #c7d2fe; box-shadow: 0 4px 16px rgba(79,70,229,.08); }
-#send-btn { min-width: 110px; }
-#examples button { border-radius: 999px !important; background: white !important;
-                   border: 1px solid #c7d2fe !important; color: #3730a3 !important; }
-#examples button:hover { background: #eef2ff !important; }
+    color:
+        #3730a3 !important;
+
+    border-radius:
+        5px;
+
+    padding:
+        2px 5px;
+}
+
+
+/* INPUT */
+
+#input-row {
+    background:
+        white;
+
+    border-radius:
+        16px;
+
+    padding:
+        8px;
+
+    border:
+        1px solid
+        #c7d2fe;
+
+    box-shadow:
+        0 4px 16px
+        rgba(79,70,229,.08);
+}
+
+
+#send-btn {
+    min-width:
+        110px;
+}
+
+
+/* EXAMPLES */
+
+#examples button {
+    border-radius:
+        999px !important;
+
+    background:
+        white !important;
+
+    border:
+        1px solid
+        #c7d2fe !important;
+
+    color:
+        #3730a3 !important;
+}
+
+
+#examples button:hover {
+    background:
+        #eef2ff !important;
+}
+
 """
 
 
-# ---------- Layout ----------
+# =========================================================
+# GRADIO UI
+# =========================================================
 
-with gr.Blocks(title="AI Regulation Assistant") as demo:
+with gr.Blocks(
+    title="AI Regulation Assistant"
+) as demo:
+
+
+    # =====================================================
+    # HEADER
+    # =====================================================
 
     gr.HTML(
         """
         <div id="hero">
-          <h1>🤖 AI Regulation Assistant</h1>
-          <p>Ask anything about the <b>EU AI Act</b> and the
-             <b>NIST AI Risk Management Framework</b>.
-             Every answer cites the exact page it came from.</p>
-          <span class="pill">🇪🇺 EU AI Act 2024/1689</span>
-          <span class="pill">🇺🇸 NIST AI RMF 1.0</span>
+
+            <h1>
+                🤖 AI Regulation Assistant
+            </h1>
+
+            <p>
+                Ask questions about the
+                <b>EU AI Act</b>
+                and
+                <b>NIST AI Risk Management Framework</b>.
+                The Agent Steps panel shows how the
+                assistant searches the documents.
+            </p>
+
+            <span class="pill">
+                🇪🇺 EU AI Act
+            </span>
+
+            <span class="pill">
+                🇺🇸 NIST AI RMF
+            </span>
+
+            <span class="pill">
+                🔍 Agentic RAG
+            </span>
+
         </div>
         """
     )
 
+
+    # =====================================================
+    # CHATBOT
+    # =====================================================
+
     chatbot = gr.Chatbot(
         elem_id="chat",
-        height=520,
+
+        height=500,
+
         show_label=False,
-        sanitize_html=False,
-        avatar_images=(None, None),
+
         placeholder=(
             "<div style='text-align:center;color:#64748b'>"
-            "<div style='font-size:2.4rem'>💬</div>"
-            "<b>Ask your first question below</b><br>"
-            "Type and press <b>Enter</b> to send."
+            "<div style='font-size:2.4rem'>🤖</div>"
+            "<b>Ask your first question</b><br>"
+            "The answer appears here and the agent actions "
+            "appear below."
             "</div>"
         ),
     )
 
-    with gr.Row(elem_id="input-row", equal_height=True):
+
+    # =====================================================
+    # AGENT STEPS PANEL
+    # =====================================================
+
+    with gr.Accordion(
+        "🤖 Agent Steps",
+        open=True
+    ):
+
+        agent_steps = gr.Markdown(
+            value=(
+                "### 🤖 Agent Steps\n\n"
+                "Ask a question to see the agent's actions."
+            ),
+
+            elem_id="agent-panel"
+        )
+
+
+    # =====================================================
+    # INPUT
+    # =====================================================
+
+    with gr.Row(
+        elem_id="input-row",
+        equal_height=True
+    ):
+
         question = gr.Textbox(
             show_label=False,
-            placeholder="Type your question and press Enter…",
+
+            placeholder=(
+                "Ask about the EU AI Act or NIST AI RMF..."
+            ),
+
             lines=1,
+
             max_lines=4,
+
             scale=8,
+
             container=False,
+
             autofocus=True,
         )
-        send = gr.Button("Send ➤", variant="primary", scale=1, elem_id="send-btn")
-        clear = gr.Button("🗑️ Clear", variant="secondary", scale=1)
 
-    gr.Markdown("**Try one of these:**")
-    with gr.Row(elem_id="examples"):
-        example_buttons = [gr.Button(text, size="sm") for text in EXAMPLES]
 
-    # Enter key and Send button both ask the question.
-    ask_events = [
-        question.submit(respond, [question, chatbot], [question, chatbot]),
-        send.click(respond, [question, chatbot], [question, chatbot]),
-    ]
-
-    for button in example_buttons:
-        ask_events.append(
-            button.click(use_example, [button, chatbot], [question, chatbot])
+        send = gr.Button(
+            "Send ➤",
+            variant="primary",
+            scale=1,
+            elem_id="send-btn"
         )
 
-    # Clear runs instantly (no queue) and stops any answer in progress.
+
+        clear = gr.Button(
+            "🗑️ Clear",
+            variant="secondary",
+            scale=1
+        )
+
+
+    # =====================================================
+    # EXAMPLES
+    # =====================================================
+
+    gr.Markdown(
+        "**Try one of these:**"
+    )
+
+
+    with gr.Row(
+        elem_id="examples"
+    ):
+
+        example_buttons = [
+            gr.Button(
+                example,
+                size="sm"
+            )
+
+            for example in EXAMPLES
+        ]
+
+
+    # =====================================================
+    # ENTER KEY
+    # =====================================================
+
+    enter_event = question.submit(
+        respond,
+
+        [
+            question,
+            chatbot
+        ],
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ]
+    )
+
+
+    # =====================================================
+    # SEND BUTTON
+    # =====================================================
+
+    send_event = send.click(
+        respond,
+
+        [
+            question,
+            chatbot
+        ],
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ]
+    )
+
+
+    ask_events = [
+        enter_event,
+        send_event
+    ]
+
+
+    # =====================================================
+    # EXAMPLE BUTTONS
+    # =====================================================
+
+    for button in example_buttons:
+
+        event = button.click(
+            use_example,
+
+            [
+                button,
+                chatbot
+            ],
+
+            [
+                question,
+                chatbot,
+                agent_steps
+            ]
+        )
+
+        ask_events.append(
+            event
+        )
+
+
+    # =====================================================
+    # CLEAR BUTTON
+    # =====================================================
+
     clear.click(
-        lambda: ("", []),
+        clear_all,
+
         None,
-        [question, chatbot],
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ],
+
         queue=False,
+
         cancels=ask_events,
     )
 
 
-# Always use the light theme so the colours stay readable.
+# =========================================================
+# FORCE LIGHT THEME
+# =========================================================
+
 FORCE_LIGHT = """
 () => {
+
     const url = new URL(window.location);
-    if (url.searchParams.get('__theme') !== 'light') {
-        url.searchParams.set('__theme', 'light');
-        window.location.href = url.href;
+
+    if (
+        url.searchParams.get('__theme')
+        !==
+        'light'
+    ) {
+
+        url.searchParams.set(
+            '__theme',
+            'light'
+        );
+
+        window.location.href =
+            url.href;
     }
 }
 """
 
 
+# =========================================================
+# START
+# =========================================================
+
 if __name__ == "__main__":
-    demo.launch(theme=THEME, css=CSS, js=FORCE_LIGHT)
+
+    demo.launch(
+        theme=THEME,
+        css=CSS,
+        js=FORCE_LIGHT
+    )
