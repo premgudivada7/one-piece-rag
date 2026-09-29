@@ -1,5 +1,6 @@
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import faiss
@@ -21,7 +22,9 @@ TOP_K = 15
 
 # ---------- Load data ----------
 
+@lru_cache(maxsize=1)
 def load_data():
+    """Load chunks and index once, then reuse them."""
     with open(CHUNKS_FILE, "r", encoding="utf-8") as f:
         chunks = json.load(f)
 
