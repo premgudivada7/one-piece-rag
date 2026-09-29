@@ -1,5 +1,3 @@
-"""Arithmetic tool for the agent. No API calls are needed."""
-
 import ast
 import json
 import math

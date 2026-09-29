@@ -3,6 +3,8 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from cost_tracker import track_cost
+
 
 # Load OpenAI API key from .env / environment
 load_dotenv()
@@ -122,5 +124,8 @@ Remember:
             },
         ],
     )
+
+    # Record the estimated cost of this chat call.
+    track_cost(response)
 
     return response.choices[0].message.content.strip()
