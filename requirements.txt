@@ -29,7 +29,7 @@ jiter==0.17.0
 markdown-it-py==4.2.0
 markupsafe==3.0.3
 mdurl==0.1.2
-numpy==2.5.3
+numpy==2.4.6
 openai==3.19.2
 orjson==3.12.0
 packaging==26.3
