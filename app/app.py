@@ -5,12 +5,45 @@ import gradio as gr
 
 from retrieval import load_data, retrieve
 from generate_answer import generate_answer
+from tools import send_message
 
 
 FALLBACK_MESSAGE = (
     "I don't have enough information in the provided "
     "documents to answer this question."
 )
+pending_message = ""
+pending_platform = "slack"
+pending_answer = ""
+
+def approve_send():
+    global pending_message, pending_platform
+
+    if not pending_message:
+        return "No message is waiting for approval."
+
+    result = send_message(
+        pending_message,
+        pending_platform
+    )
+
+    pending_message = ""
+
+    if result["success"]:
+        return "Message sent successfully."
+
+    return f"Message was not sent: {result['error']}"
+
+
+def reject_send():
+    global pending_message
+
+    if not pending_message:
+        return "No message is waiting for approval."
+
+    pending_message = ""
+
+    return "Message sending cancelled."
 
 EXAMPLES = [
     "What are the four core functions of the NIST AI RMF?",
@@ -176,6 +209,8 @@ def highlight_citations(answer: str) -> str:
 
 def respond(message: str, history: list):
     """Add the question to the chat, then stream in the answer."""
+    global pending_message, pending_answer
+
     message = (message or "").strip()
 
     if not message:
@@ -186,6 +221,7 @@ def respond(message: str, history: list):
         {"role": "user", "content": message},
         {"role": "assistant", "content": "🔍 *Searching the documents…*"},
     ]
+
     yield "", history
 
     try:
@@ -196,7 +232,10 @@ def respond(message: str, history: list):
 
         answer = generate_answer(message, chunks)
 
-    except Exception as error:  # Show errors in the chat, not a crash.
+        pending_message = answer
+        pending_answer = answer
+
+    except Exception as error:
         history[-1]["content"] = (
             f'<div class="error-msg">⚠️ Something went wrong: '
             f"{html.escape(str(error))}</div>"
@@ -219,10 +258,9 @@ def respond(message: str, history: list):
 
     history[-1]["content"] = content
     yield "", history
-
-
-def use_example(example: str, history: list):
-    """Clicking an example chip asks it straight away."""
+   
+    def use_example(example: str, history: list):
+        """Clicking an example chip asks it straight away."""
     yield from respond(example, history)
 
 
@@ -374,6 +412,22 @@ with gr.Blocks(title="AI Regulation Assistant") as demo:
         )
         send = gr.Button("Send ➤", variant="primary", scale=1, elem_id="send-btn")
         clear = gr.Button("🗑️ Clear", variant="secondary", scale=1)
+    gr.Markdown("### Send answer to Slack")
+
+    with gr.Row():
+        approve_button = gr.Button(
+            "Yes, Send",
+            variant="primary"
+        )
+        reject_button = gr.Button(
+            "No, Cancel",
+            variant="secondary"
+        )
+
+    approval_status = gr.Textbox(
+        label="Message status",
+        interactive=False
+    )
 
     gr.Markdown("**Try one of these:**")
     with gr.Row(elem_id="examples"):
@@ -397,6 +451,19 @@ with gr.Blocks(title="AI Regulation Assistant") as demo:
         [question, chatbot],
         queue=False,
         cancels=ask_events,
+    )
+    approve_button.click(
+        approve_send,
+        None,
+        approval_status,
+        queue=False,
+    )
+
+    reject_button.click(
+        reject_send,
+        None,
+        approval_status,
+        queue=False,
     )
 
 
