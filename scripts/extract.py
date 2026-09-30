@@ -1,9 +1,3 @@
-"""Extract and clean the project's PDF corpus.
-
-Outputs:
-    data/corpus.json — one entry per PDF page
-    data/sample.json — the first 10 entries
-"""
 
 import json
 import re

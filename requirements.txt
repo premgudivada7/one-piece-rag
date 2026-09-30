@@ -70,3 +70,4 @@ urllib3==2.8.0
 uvicorn==0.54.0
 
 simpleeval==1.0.8
+mcp==1.27.0

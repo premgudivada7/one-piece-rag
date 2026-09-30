@@ -1,362 +1,246 @@
+import html
+import json
+
 import gradio as gr
 
-from agent import run_agent
+from agent import FALLBACK_MESSAGE, run_agent
+from multi_agent import run_multi_agent
 
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 
-FALLBACK_MESSAGE = (
-    "I don't have enough information in the provided "
-    "documents to answer this question."
-)
-
+MODES = ["🤖 Single agent", "👥 Multi-agent team"]
 
 EXAMPLES = [
+    "What is the fine in Article 99(3), what is half of it, and how "
+    "many days ago did the EU AI Act start to apply generally?",
+    "How many times does each document use the term 'trustworthy', "
+    "and what is the total?",
     "What are the four core functions of the NIST AI RMF?",
-    "How does Article 3 of the EU AI Act define risk?",
-    "Which AI practices are prohibited under Article 5?",
     "What is the difference between a provider and a deployer?",
 ]
 
+TOOL_ICONS = {
+    "search_corpus": "🔍",
+    "quote_exact": "📄",
+    "get_article": "📜",
+    "count_term": "🔢",
+    "calculator": "🧮",
+    "date_tool": "📅",
+    "ask_eu_ai_act_agent": "🇪🇺",
+    "ask_nist_ai_rmf_agent": "🇺🇸",
+}
+
+AGENT_TITLES = {
+    "eu_ai_act_agent": "🇪🇺 EU AI Act agent",
+    "nist_ai_rmf_agent": "🇺🇸 NIST AI RMF agent",
+}
+
+WAITING_PANEL = (
+    "### 🤖 Agent Steps\n\n"
+    "Ask a question to see which tools the agent uses, step by step."
+)
+
+# Long texts are shortened in the "View code" dropdowns.
+MAX_TEXT_IN_CODE = 300
+
 
 # =========================================================
-# FORMAT AGENT TRACE AS MARKDOWN
+# FORMAT AGENT STEPS
 # =========================================================
 
-def format_agent_trace(trace: list) -> str:
+def shorten(value):
+    """Shorten long strings inside a tool result for display."""
+    if isinstance(value, str):
+        return value if len(value) <= MAX_TEXT_IN_CODE \
+            else value[:MAX_TEXT_IN_CODE] + " …"
+    if isinstance(value, list):
+        return [shorten(item) for item in value]
+    if isinstance(value, dict):
+        return {key: shorten(item) for key, item in value.items()}
+    return value
 
-    if not trace:
 
-        return (
-            "### 🤖 Agent Steps\n\n"
-            "No agent actions recorded."
-        )
+def code_dropdown(step: dict) -> str:
+    """A collapsible block with the exact tool call and its result."""
+    call = {"tool": step["tool"], "arguments": step["arguments"]}
+    code = (
+        "// Tool call\n"
+        + json.dumps(call, ensure_ascii=False, indent=2)
+        + "\n// Result\n"
+        + json.dumps(shorten(step.get("result", {})),
+                     ensure_ascii=False, indent=2)
+    )
+    # One HTML line (no blank lines), so Markdown leaves the code untouched.
+    code = html.escape(code).replace("\n", "&#10;")
+    return (
+        '<details class="step-code"><summary>View code</summary>'
+        f"<pre><code>{code}</code></pre></details>"
+    )
 
 
+def render_steps(steps: list) -> list[str]:
+    """Group tool calls by step; mark steps that ran tools in parallel."""
+    lines = []
+    by_step = {}
+    for step in steps:
+        by_step.setdefault(step["step"], []).append(step)
+
+    for number, calls in by_step.items():
+        parallel = (f" · ⚡ {len(calls)} tools in parallel"
+                    if len(calls) > 1 else "")
+        lines += [f"#### Step {number}{parallel}", ""]
+
+        for call in calls:
+            mark = "✅" if call["ok"] else "❌"
+            icon = TOOL_ICONS.get(call["tool"], "🛠️")
+            lines += [
+                f"{mark} {icon} **`{call['tool']}`** — "
+                f"{html.escape(str(call['summary']))}",
+                "",
+                code_dropdown(call),
+                "",
+            ]
+
+    return lines
+
+
+def tool_chain(steps: list) -> str:
+    """'get_article ×2 → calculator → date_tool' in the order used."""
+    order, counts = [], {}
+    for step in steps:
+        name = step["tool"]
+        if name not in counts:
+            order.append(name)
+        counts[name] = counts.get(name, 0) + 1
+
+    return " → ".join(
+        f"{name} ×{counts[name]}" if counts[name] > 1 else name
+        for name in order
+    ) or "no tools"
+
+
+def format_single_run(run: dict) -> str:
+    """Agent Steps panel for the single agent."""
+    distinct = len({step["tool"] for step in run["steps"]})
     lines = [
-        "### 🤖 Agent Steps",
+        "### 🤖 Agent Steps — single agent",
         "",
-        "This panel shows the agent's **tool and retrieval actions**.",
+        f"**🧰 Tools used ({distinct}):** {tool_chain(run['steps'])}  ",
+        f"**Model calls:** {run['model_calls']} · "
+        f"**Time:** {run.get('seconds', 0)} s · "
+        f"**Stopped:** {run['stop_reason']}",
         "",
     ]
 
-
-    step_number = 1
-
-
-    for event in trace:
-
-        # =================================================
-        # SEARCH
-        # =================================================
-
-        if event["type"] == "search":
-
-            lines.append(
-                f"#### {step_number}. 🔍 Search Attempt "
-                f"{event['attempt']}"
-            )
-
-            lines.append("")
-
-            lines.append(
-                f"**Tool:** `{event['tool']}`"
-            )
-
-            lines.append("")
-
-            lines.append(
-                f"**Query:** `{event['query']}`"
-            )
-
-            lines.append("")
-
-            lines.append(
-                f"**Top K:** {event['k']}"
-            )
-
-            lines.append("")
-
-            step_number += 1
-
-
-        # =================================================
-        # RETRIEVAL
-        # =================================================
-
-        elif event["type"] == "retrieval":
-
-            lines.append(
-                f"#### {step_number}. 📚 Retrieval Result"
-            )
-
-            lines.append("")
-
-            lines.append(
-                f"Found **{event['count']} passages**."
-            )
-
-            lines.append("")
-
-
-            # Get unique pages
-            pages = []
-
-            # Get unique documents
-            documents = []
-
-
-            for match in event["matches"]:
-
-                page = match["page"]
-                source = match["source"]
-
-                if page not in pages:
-                    pages.append(page)
-
-                if source not in documents:
-                    documents.append(source)
-
-
-            if documents:
-
-                lines.append(
-                    "**Document:** "
-                    + ", ".join(
-                        f"`{doc}`"
-                        for doc in documents
-                    )
-                )
-
-                lines.append("")
-
-
-            if pages:
-
-                lines.append(
-                    "**Pages retrieved:** "
-                    + ", ".join(
-                        str(page)
-                        for page in pages
-                    )
-                )
-
-                lines.append("")
-
-
-            # Show each retrieved match
-            lines.append(
-                "**Retrieved matches:**"
-            )
-
-            lines.append("")
-
-
-            for number, match in enumerate(
-                event["matches"],
-                start=1
-            ):
-
-                lines.append(
-                    f"- Match {number}: "
-                    f"`{match['source']}` — "
-                    f"page **{match['page']}** — "
-                    f"score **{match['score']}**"
-                )
-
-
-            lines.append("")
-
-            step_number += 1
-
-
-        # =================================================
-        # RETRIEVAL FAILED
-        # =================================================
-
-        elif event["type"] == "retrieval_failed":
-
-            lines.append(
-                f"#### {step_number}. ⚠️ Retrieval Insufficient"
-            )
-
-            lines.append("")
-
-            lines.append(
-                event["message"]
-            )
-
-            lines.append("")
-
-            lines.append(
-                "The agent can reformulate the search query."
-            )
-
-            lines.append("")
-
-            step_number += 1
-
-
-        # =================================================
-        # FINAL ANSWER
-        # =================================================
-
-        elif event["type"] == "final":
-
-            lines.append(
-                f"#### {step_number}. ✅ Final Answer"
-            )
-
-            lines.append("")
-
-            lines.append(
-                f"**Searches performed:** "
-                f"{event['search_count']}"
-            )
-
-            lines.append("")
-
-            lines.append(
-                event["message"]
-            )
-
-            lines.append("")
-
-            step_number += 1
-
-
-        # =================================================
-        # NO SEARCH
-        # =================================================
-
-        elif event["type"] == "no_search":
-
-            lines.append(
-                f"#### {step_number}. 🚫 No Document Search"
-            )
-
-            lines.append("")
-
-            lines.append(
-                event["message"]
-            )
-
-            lines.append("")
-
-            step_number += 1
-
-
+    if not run["steps"]:
+        lines += ["No tools were needed for this question.", ""]
+    lines += render_steps(run["steps"])
+
+    lines += final_section(run)
     return "\n".join(lines)
+
+
+def format_multi_run(run: dict) -> str:
+    """Agent Steps panel for the coordinator + specialist agents."""
+    agents = [AGENT_TITLES.get(name, name) for name in run["agents_used"]]
+    lines = [
+        "### 👥 Agent Steps — multi-agent team",
+        "",
+        f"**Agents used ({len(agents)}):** "
+        f"{', '.join(agents) or 'coordinator only'}  ",
+        f"**Model calls:** {run['model_calls']} · "
+        f"**Time:** {run.get('seconds', 0)} s · "
+        f"**Stopped:** {run['stop_reason']}",
+        "",
+        "### 🧭 Coordinator",
+        "",
+        f"**🧰 Tools used:** {tool_chain(run['coordinator_steps'])}",
+        "",
+    ]
+    lines += render_steps(run["coordinator_steps"])
+
+    for specialist in run["specialist_runs"]:
+        title = AGENT_TITLES.get(specialist["agent"], specialist["agent"])
+        lines += [
+            f"### {title}",
+            "",
+            f"**Asked:** {html.escape(specialist['question'])}  ",
+            f"**🧰 Tools used:** {tool_chain(specialist['steps'])}",
+            "",
+        ]
+        lines += render_steps(specialist["steps"])
+
+    lines += final_section(run)
+    return "\n".join(lines)
+
+
+def final_section(run: dict) -> list[str]:
+    """Closing lines: citations found in the final answer."""
+    citations = ", ".join(
+        f"{c['source']} p. {c['page']}" for c in run["citations"]
+    ) or "none"
+    return ["#### ✅ Final answer", "", f"**Citations:** {citations}", ""]
+
+
+def tools_line(run: dict, multi: bool) -> str:
+    """One short line under the chat answer listing the tools used."""
+    if multi:
+        parts = [f"coordinator: {tool_chain(run['coordinator_steps'])}"]
+        parts += [
+            f"{AGENT_TITLES.get(s['agent'], s['agent'])}: {tool_chain(s['steps'])}"
+            for s in run["specialist_runs"]
+        ]
+        return "🧰 " + " · ".join(parts)
+    return f"🧰 Tools used: {tool_chain(run['steps'])}"
 
 
 # =========================================================
 # CHAT LOGIC
 # =========================================================
 
-def respond(message: str, history: list):
-
-    message = (
-        message
-        or ""
-    ).strip()
-
+def respond(message: str, history: list, mode: str):
+    """Run the selected agent and show its answer and steps."""
+    message = (message or "").strip()
 
     if not message:
-
-        yield (
-            "",
-            history,
-            "### 🤖 Agent Steps\n\nWaiting for a question..."
-        )
-
+        yield "", history, WAITING_PANEL
         return
 
-
-    # =====================================================
-    # ADD USER MESSAGE
-    # =====================================================
+    multi = mode == MODES[1]
 
     history = history + [
-        {
-            "role": "user",
-            "content": message
-        },
-
-        {
-            "role": "assistant",
-            "content": "🤖 Agent is working..."
-        }
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": "🤖 Agent is working..."},
     ]
 
-
-    # Show working status
     yield (
         "",
         history,
-        (
-            "### 🤖 Agent Steps\n\n"
-            "⏳ The agent is deciding whether to search "
-            "the document corpus..."
-        )
+        "### 🤖 Agent Steps\n\n⏳ The "
+        + ("coordinator is asking the specialist agents"
+           if multi else "agent is choosing which tools to use")
+        + "...",
     )
 
-
     try:
-
-        # =================================================
-        # RUN AGENT
-        # =================================================
-
-        final_message, trace = run_agent(
-            message
-        )
-
-
-        answer = (
-            final_message.content
-            or FALLBACK_MESSAGE
-        )
-
-
-        # =================================================
-        # FINAL CHAT ANSWER
-        # =================================================
-
-        history[-1]["content"] = answer
-
-
-        # =================================================
-        # AGENT TRACE
-        # =================================================
-
-        trace_markdown = format_agent_trace(
-            trace
-        )
-
-
-        yield (
-            "",
-            history,
-            trace_markdown
-        )
-
-
-    except Exception as error:
+        run = run_multi_agent(message) if multi else run_agent(message)
+        answer = run["answer"] or FALLBACK_MESSAGE
 
         history[-1]["content"] = (
-            f"⚠️ Something went wrong: {error}"
+            f"{answer}\n\n<sub>{html.escape(tools_line(run, multi))}</sub>"
         )
+        panel = format_multi_run(run) if multi else format_single_run(run)
+        yield "", history, panel
 
-
+    except Exception as error:  # Show errors in the chat, not a crash.
+        history[-1]["content"] = f"⚠️ Something went wrong: {error}"
         yield (
             "",
             history,
-            (
-                "### 🤖 Agent Steps\n\n"
-                "❌ An error occurred while running the agent."
-            )
+            "### 🤖 Agent Steps\n\n❌ An error occurred while running the agent.",
         )
 
 
@@ -364,12 +248,8 @@ def respond(message: str, history: list):
 # EXAMPLE BUTTON
 # =========================================================
 
-def use_example(example: str, history: list):
-
-    yield from respond(
-        example,
-        history
-    )
+def use_example(example: str, history: list, mode: str):
+    yield from respond(example, history, mode)
 
 
 # =========================================================
@@ -377,15 +257,7 @@ def use_example(example: str, history: list):
 # =========================================================
 
 def clear_all():
-
-    return (
-        "",
-        [],
-        (
-            "### 🤖 Agent Steps\n\n"
-            "Ask a question to see the agent's actions."
-        )
-    )
+    return "", [], WAITING_PANEL
 
 
 # =========================================================
@@ -618,6 +490,33 @@ body,
         #eef2ff !important;
 }
 
+/* AGENT STEP CODE DROPDOWNS */
+#agent-panel details.step-code {
+    margin: 4px 0 12px 22px;
+}
+#agent-panel details.step-code summary {
+    cursor: pointer;
+    color: #4f46e5;
+    font-size: .82rem;
+    font-weight: 600;
+}
+#agent-panel details.step-code pre {
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: .76rem;
+    max-height: 320px;
+    overflow: auto;
+}
+#agent-panel details.step-code pre code {
+    background: transparent !important;
+    color: #e2e8f0 !important;
+    padding: 0;
+}
+#mode-row {
+    margin-top: 6px;
+}
 """
 
 
@@ -647,8 +546,8 @@ with gr.Blocks(
                 <b>EU AI Act</b>
                 and
                 <b>NIST AI Risk Management Framework</b>.
-                The Agent Steps panel shows how the
-                assistant searches the documents.
+                The Agent Steps panel shows every tool
+                and agent used, with the code of each step.
             </p>
 
             <span class="pill">
@@ -706,6 +605,20 @@ with gr.Blocks(
             ),
 
             elem_id="agent-panel"
+        )
+
+
+    # =====================================================
+    # AGENT MODE
+    # =====================================================
+
+    with gr.Row(elem_id="mode-row"):
+        mode = gr.Radio(
+            MODES,
+            value=MODES[0],
+            label="Agent mode",
+            info="Single agent with 6 tools, or a coordinator "
+                 "with EU AI Act and NIST specialist agents.",
         )
 
 
@@ -784,7 +697,8 @@ with gr.Blocks(
 
         [
             question,
-            chatbot
+            chatbot,
+            mode
         ],
 
         [
@@ -804,7 +718,8 @@ with gr.Blocks(
 
         [
             question,
-            chatbot
+            chatbot,
+            mode
         ],
 
         [
@@ -832,7 +747,8 @@ with gr.Blocks(
 
             [
                 button,
-                chatbot
+                chatbot,
+                mode
             ],
 
             [
