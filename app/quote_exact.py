@@ -1,4 +1,3 @@
-"""Return the exact stored text of a document page from corpus.json."""
 
 import argparse
 import json

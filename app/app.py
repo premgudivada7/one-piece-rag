@@ -1,442 +1,824 @@
-"""Gradio interface for the AI regulation RAG assistant."""
-
 import html
-import logging
-import re
+import json
 
 import gradio as gr
 
-from generate_answer import generate_answer
-from retrieval import load_data, retrieve
+from agent import FALLBACK_MESSAGE, run_agent
+from multi_agent import run_multi_agent
 
 
-# ---------- Configuration ----------
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
-LOGGER = logging.getLogger(__name__)
-
-FALLBACK_MESSAGE = (
-    "I don't have enough information in the provided "
-    "documents to answer this question."
-)
+MODES = ["🤖 Single agent", "👥 Multi-agent team"]
 
 EXAMPLES = [
+    "What is the fine in Article 99(3), what is half of it, and how "
+    "many days ago did the EU AI Act start to apply generally?",
+    "How many times does each document use the term 'trustworthy', "
+    "and what is the total?",
     "What are the four core functions of the NIST AI RMF?",
-    "How does Article 3 of the EU AI Act define risk?",
-    "Which AI practices are prohibited under Article 5?",
     "What is the difference between a provider and a deployer?",
 ]
 
-SOURCE_LABELS = {
-    "eu_ai_act_2024.pdf": ("EU AI Act", "src-eu"),
-    "nist_ai_rmf_1_0.pdf": ("NIST AI RMF", "src-nist"),
+TOOL_ICONS = {
+    "search_corpus": "🔍",
+    "quote_exact": "📄",
+    "get_article": "📜",
+    "count_term": "🔢",
+    "calculator": "🧮",
+    "date_tool": "📅",
+    "ask_eu_ai_act_agent": "🇪🇺",
+    "ask_nist_ai_rmf_agent": "🇺🇸",
 }
 
+AGENT_TITLES = {
+    "eu_ai_act_agent": "🇪🇺 EU AI Act agent",
+    "nist_ai_rmf_agent": "🇺🇸 NIST AI RMF agent",
+}
 
-# ---------- Formatting helpers ----------
+WAITING_PANEL = (
+    "### 🤖 Agent Steps\n\n"
+    "Ask a question to see which tools the agent uses, step by step."
+)
 
-def cited_numbers(answer: str, total: int) -> list[int]:
-    """Find valid references such as [2] or [1, 3]."""
-    numbers = set()
-
-    for group in re.findall(r"\[([\d,\s]+)\]", answer):
-        for part in group.split(","):
-            part = part.strip()
-
-            if part.isdigit():
-                number = int(part)
-
-                if 1 <= number <= total:
-                    numbers.add(number)
-
-    return sorted(numbers)
+# Long texts are shortened in the "View code" dropdowns.
+MAX_TEXT_IN_CODE = 300
 
 
-def doc_info(source: str) -> tuple[str, str]:
-    """Return an escaped label and a predefined CSS class."""
-    label, css_class = SOURCE_LABELS.get(
-        source, (source, "src-other")
+# =========================================================
+# FORMAT AGENT STEPS
+# =========================================================
+
+def shorten(value):
+    """Shorten long strings inside a tool result for display."""
+    if isinstance(value, str):
+        return value if len(value) <= MAX_TEXT_IN_CODE \
+            else value[:MAX_TEXT_IN_CODE] + " …"
+    if isinstance(value, list):
+        return [shorten(item) for item in value]
+    if isinstance(value, dict):
+        return {key: shorten(item) for key, item in value.items()}
+    return value
+
+
+def code_dropdown(step: dict) -> str:
+    """A collapsible block with the exact tool call and its result."""
+    call = {"tool": step["tool"], "arguments": step["arguments"]}
+    code = (
+        "// Tool call\n"
+        + json.dumps(call, ensure_ascii=False, indent=2)
+        + "\n// Result\n"
+        + json.dumps(shorten(step.get("result", {})),
+                     ensure_ascii=False, indent=2)
     )
-    return html.escape(label), css_class
-
-
-def source_card(number: int, chunk: dict, cited: bool) -> str:
-    """Render one passage, escaping document content before display."""
-    label, css_class = doc_info(chunk["source"])
-    filename = html.escape(chunk["source"])
-    text = html.escape(chunk["text"])
-    status = "Cited in answer" if cited else "Retrieved, not cited"
-    page = int(chunk["page"])
-    score = float(chunk["score"])
-
+    # One HTML line (no blank lines), so Markdown leaves the code untouched.
+    code = html.escape(code).replace("\n", "&#10;")
     return (
-        f'<div class="source-card {css_class}">'
-        '<div class="source-heading">'
-        f'<strong>[{number}]</strong>'
-        f'<span class="source-badge">{label}</span>'
-        f'<span>PDF page {page}</span>'
-        f'<span class="score">Similarity: {score:.3f}</span>'
-        '</div>'
-        f'<div class="source-status">{status} · {filename}</div>'
-        f'<div class="source-text">{text}</div>'
-        '</div>'
+        '<details class="step-code"><summary>View code</summary>'
+        f"<pre><code>{code}</code></pre></details>"
     )
 
 
-def format_sources(chunks: list[dict], numbers: list[int]) -> str:
-    """Show cited passages and all search results for the latest question."""
-    all_chunks, _ = load_data()
-    cited = set(numbers)
+def render_steps(steps: list) -> list[str]:
+    """Group tool calls by step; mark steps that ran tools in parallel."""
+    lines = []
+    by_step = {}
+    for step in steps:
+        by_step.setdefault(step["step"], []).append(step)
 
-    cited_cards = "".join(
-        source_card(number, chunks[number - 1], cited=True)
-        for number in numbers
-    )
+    for number, calls in by_step.items():
+        parallel = (f" · ⚡ {len(calls)} tools in parallel"
+                    if len(calls) > 1 else "")
+        lines += [f"#### Step {number}{parallel}", ""]
 
-    all_cards = "".join(
-        source_card(number, chunk, cited=number in cited)
-        for number, chunk in enumerate(chunks, start=1)
-    )
+        for call in calls:
+            mark = "✅" if call["ok"] else "❌"
+            icon = TOOL_ICONS.get(call["tool"], "🛠️")
+            lines += [
+                f"{mark} {icon} **`{call['tool']}`** — "
+                f"{html.escape(str(call['summary']))}",
+                "",
+                code_dropdown(call),
+                "",
+            ]
 
-    if not cited_cards:
-        cited_cards = (
-            '<p>No numbered citations were detected in this answer. '
-            'Review the retrieved passages below.</p>'
-        )
-
-    return (
-        '<section class="source-panel">'
-        '<h3>Sources for the latest question</h3>'
-        '<div class="summary-row">'
-        f'<span>{len(all_chunks):,} indexed passages</span>'
-        f'<span>{len(chunks)} retrieved</span>'
-        f'<span>{len(cited)} cited in answer</span>'
-        '</div>'
-        '<p class="source-note">'
-        'A citation identifies a passage referenced by the model; '
-        'check that the passage supports the claim. '
-        'Page numbers are PDF positions, starting at 1.'
-        '</p>'
-        '<details open><summary>Passages cited in the answer</summary>'
-        f'{cited_cards}</details>'
-        '<details><summary>All retrieved passages</summary>'
-        f'{all_cards}</details>'
-        '</section>'
-    )
+    return lines
 
 
-# ---------- Chat logic ----------
+def tool_chain(steps: list) -> str:
+    """'get_article ×2 → calculator → date_tool' in the order used."""
+    order, counts = [], {}
+    for step in steps:
+        name = step["tool"]
+        if name not in counts:
+            order.append(name)
+        counts[name] = counts.get(name, 0) + 1
 
-def respond(message: str, history: list):
-    """Retrieve passages, generate an answer, and update the interface."""
+    return " → ".join(
+        f"{name} ×{counts[name]}" if counts[name] > 1 else name
+        for name in order
+    ) or "no tools"
+
+
+def format_single_run(run: dict) -> str:
+    """Agent Steps panel for the single agent."""
+    distinct = len({step["tool"] for step in run["steps"]})
+    lines = [
+        "### 🤖 Agent Steps — single agent",
+        "",
+        f"**🧰 Tools used ({distinct}):** {tool_chain(run['steps'])}  ",
+        f"**Model calls:** {run['model_calls']} · "
+        f"**Time:** {run.get('seconds', 0)} s · "
+        f"**Stopped:** {run['stop_reason']}",
+        "",
+    ]
+
+    if not run["steps"]:
+        lines += ["No tools were needed for this question.", ""]
+    lines += render_steps(run["steps"])
+
+    lines += final_section(run)
+    return "\n".join(lines)
+
+
+def format_multi_run(run: dict) -> str:
+    """Agent Steps panel for the coordinator + specialist agents."""
+    agents = [AGENT_TITLES.get(name, name) for name in run["agents_used"]]
+    lines = [
+        "### 👥 Agent Steps — multi-agent team",
+        "",
+        f"**Agents used ({len(agents)}):** "
+        f"{', '.join(agents) or 'coordinator only'}  ",
+        f"**Model calls:** {run['model_calls']} · "
+        f"**Time:** {run.get('seconds', 0)} s · "
+        f"**Stopped:** {run['stop_reason']}",
+        "",
+        "### 🧭 Coordinator",
+        "",
+        f"**🧰 Tools used:** {tool_chain(run['coordinator_steps'])}",
+        "",
+    ]
+    lines += render_steps(run["coordinator_steps"])
+
+    for specialist in run["specialist_runs"]:
+        title = AGENT_TITLES.get(specialist["agent"], specialist["agent"])
+        lines += [
+            f"### {title}",
+            "",
+            f"**Asked:** {html.escape(specialist['question'])}  ",
+            f"**🧰 Tools used:** {tool_chain(specialist['steps'])}",
+            "",
+        ]
+        lines += render_steps(specialist["steps"])
+
+    lines += final_section(run)
+    return "\n".join(lines)
+
+
+def final_section(run: dict) -> list[str]:
+    """Closing lines: citations found in the final answer."""
+    citations = ", ".join(
+        f"{c['source']} p. {c['page']}" for c in run["citations"]
+    ) or "none"
+    return ["#### ✅ Final answer", "", f"**Citations:** {citations}", ""]
+
+
+def tools_line(run: dict, multi: bool) -> str:
+    """One short line under the chat answer listing the tools used."""
+    if multi:
+        parts = [f"coordinator: {tool_chain(run['coordinator_steps'])}"]
+        parts += [
+            f"{AGENT_TITLES.get(s['agent'], s['agent'])}: {tool_chain(s['steps'])}"
+            for s in run["specialist_runs"]
+        ]
+        return "🧰 " + " · ".join(parts)
+    return f"🧰 Tools used: {tool_chain(run['steps'])}"
+
+
+# =========================================================
+# CHAT LOGIC
+# =========================================================
+
+def respond(message: str, history: list, mode: str):
+    """Run the selected agent and show its answer and steps."""
     message = (message or "").strip()
 
     if not message:
-        yield "", history or [], gr.skip()
+        yield "", history, WAITING_PANEL
         return
 
-    # Copy messages so this callback does not modify the input history.
-    history = [dict(item) for item in (history or [])]
+    multi = mode == MODES[1]
 
-    # Escape user content before passing it to the Markdown renderer.
-    history.extend([
-        {"role": "user", "content": html.escape(message)},
-        {
-            "role": "assistant",
-            "content": "🔎 Searching the documents…",
-        },
-    ])
+    history = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": "🤖 Agent is working..."},
+    ]
 
-    yield "", history, gr.update(value="", visible=False)
+    yield (
+        "",
+        history,
+        "### 🤖 Agent Steps\n\n⏳ The "
+        + ("coordinator is asking the specialist agents"
+           if multi else "agent is choosing which tools to use")
+        + "...",
+    )
 
     try:
-        chunks = retrieve(message)
-
-        history[-1]["content"] = "✍️ Writing the answer…"
-        yield "", history, gr.update(value="", visible=False)
-
-        if chunks:
-            answer = generate_answer(message, chunks)
-        else:
-            answer = FALLBACK_MESSAGE
-
-        if not isinstance(answer, str) or not answer.strip():
-            raise ValueError("Answer generation returned no text.")
-
-        answer = answer.strip()
-
-        # Keep the exact refusal visible instead of replacing its meaning.
-        history[-1]["content"] = html.escape(answer)
-
-        if chunks:
-            numbers = cited_numbers(answer, len(chunks))
-            sources = format_sources(chunks, numbers)
-            yield "", history, gr.update(value=sources, visible=True)
-        else:
-            yield "", history, gr.update(value="", visible=False)
-
-    except Exception:
-        # Details stay in the terminal rather than being exposed in the UI.
-        LOGGER.exception("Unable to answer the question")
+        run = run_multi_agent(message) if multi else run_agent(message)
+        answer = run["answer"] or FALLBACK_MESSAGE
 
         history[-1]["content"] = (
-            "⚠️ I couldn’t complete this request. "
-            "Please check the terminal for the error details."
+            f"{answer}\n\n<sub>{html.escape(tools_line(run, multi))}</sub>"
+        )
+        panel = format_multi_run(run) if multi else format_single_run(run)
+        yield "", history, panel
+
+    except Exception as error:  # Show errors in the chat, not a crash.
+        history[-1]["content"] = f"⚠️ Something went wrong: {error}"
+        yield (
+            "",
+            history,
+            "### 🤖 Agent Steps\n\n❌ An error occurred while running the agent.",
         )
 
-        yield "", history, gr.update(value="", visible=False)
+
+# =========================================================
+# EXAMPLE BUTTON
+# =========================================================
+
+def use_example(example: str, history: list, mode: str):
+    yield from respond(example, history, mode)
 
 
-def use_example(example: str, history: list):
-    """Run a question selected from the example buttons."""
-    yield from respond(example, history)
+# =========================================================
+# CLEAR
+# =========================================================
+
+def clear_all():
+    return "", [], WAITING_PANEL
 
 
-# ---------- Styling ----------
+# =========================================================
+# THEME
+# =========================================================
 
 THEME = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="teal",
     neutral_hue="slate",
+    font=[
+        gr.themes.GoogleFont("Inter"),
+        "system-ui",
+        "sans-serif"
+    ],
 )
 
+
+# =========================================================
+# CSS
+# =========================================================
+
 CSS = """
+
 .gradio-container {
     max-width: 1050px !important;
     margin: 0 auto !important;
 }
 
+body,
+.gradio-container {
+    background:
+        linear-gradient(
+            160deg,
+            #eef2ff 0%,
+            #f0fdfa 55%,
+            #fdf4ff 100%
+        ) !important;
+}
+
+
+/* HEADER */
+
 #hero {
-    background: linear-gradient(120deg, #312e81, #4f46e5, #0d9488);
+    background:
+        linear-gradient(
+            120deg,
+            #312e81 0%,
+            #4f46e5 50%,
+            #0d9488 100%
+        );
+
     border-radius: 20px;
     padding: 26px 30px;
-    margin-bottom: 12px;
+    color: white;
+
+    box-shadow:
+        0 12px 30px
+        rgba(79, 70, 229, .25);
 }
+
 
 #hero h1 {
     color: white;
-    margin: 0 0 8px;
+    margin: 0 0 6px;
     font-size: 1.9rem;
 }
 
+
 #hero p {
-    color: #e0e7ff;
+    color: #e0e7ff !important;
     margin: 0;
 }
 
+
+#hero b {
+    color: white !important;
+}
+
+
 #hero .pill {
     display: inline-block;
-    margin: 12px 8px 0 0;
-    padding: 4px 12px;
-    color: white;
-    background: rgba(255, 255, 255, .16);
-    border: 1px solid rgba(255, 255, 255, .3);
-    border-radius: 999px;
-    font-size: .8rem;
+
+    margin:
+        12px 8px 0 0;
+
+    padding:
+        4px 12px;
+
+    border-radius:
+        999px;
+
+    font-size:
+        .8rem;
+
+    font-weight:
+        600;
+
+    color:
+        white !important;
+
+    background:
+        rgba(255,255,255,.16);
+
+    border:
+        1px solid
+        rgba(255,255,255,.3);
 }
+
+
+/* CHAT */
 
 #chat {
-    border-radius: 16px;
+    border-radius:
+        18px !important;
+
+    border:
+        1px solid
+        #e0e7ff !important;
+
+    box-shadow:
+        0 6px 24px
+        rgba(15,23,42,.06);
+
+    background:
+        white !important;
 }
+
+
+/* AGENT PANEL */
+
+#agent-panel {
+    background:
+        white !important;
+
+    border:
+        1px solid
+        #c7d2fe !important;
+
+    border-radius:
+        16px !important;
+
+    padding:
+        8px 18px !important;
+
+    box-shadow:
+        0 5px 20px
+        rgba(79,70,229,.07);
+}
+
+
+#agent-panel h3 {
+    color:
+        #3730a3 !important;
+}
+
+
+#agent-panel h4 {
+    color:
+        #0f766e !important;
+
+    margin-top:
+        18px !important;
+}
+
+
+#agent-panel code {
+    background:
+        #eef2ff !important;
+
+    color:
+        #3730a3 !important;
+
+    border-radius:
+        5px;
+
+    padding:
+        2px 5px;
+}
+
+
+/* INPUT */
 
 #input-row {
-    padding: 8px;
-    border: 1px solid #c7d2fe;
-    border-radius: 14px;
+    background:
+        white;
+
+    border-radius:
+        16px;
+
+    padding:
+        8px;
+
+    border:
+        1px solid
+        #c7d2fe;
+
+    box-shadow:
+        0 4px 16px
+        rgba(79,70,229,.08);
 }
+
+
+#send-btn {
+    min-width:
+        110px;
+}
+
+
+/* EXAMPLES */
 
 #examples button {
-    border-radius: 999px;
+    border-radius:
+        999px !important;
+
+    background:
+        white !important;
+
+    border:
+        1px solid
+        #c7d2fe !important;
+
+    color:
+        #3730a3 !important;
 }
 
-.source-panel {
-    background: #f8fafc;
-    color: #0f172a;
-    border: 1px solid #c7d2fe;
-    border-radius: 16px;
-    padding: 16px;
+
+#examples button:hover {
+    background:
+        #eef2ff !important;
 }
 
-.source-panel h3 {
-    color: #312e81;
-    margin-top: 0;
+/* AGENT STEP CODE DROPDOWNS */
+#agent-panel details.step-code {
+    margin: 4px 0 12px 22px;
 }
-
-.summary-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.summary-row span {
-    background: #e0e7ff;
-    color: #3730a3;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: .85rem;
-}
-
-.source-note {
-    color: #475569;
-    font-size: .82rem;
-    margin: 12px 0;
-}
-
-.source-panel summary {
+#agent-panel details.step-code summary {
     cursor: pointer;
+    color: #4f46e5;
+    font-size: .82rem;
     font-weight: 600;
-    padding: 8px 0;
 }
-
-.source-card {
-    background: white;
-    border-left: 4px solid #9333ea;
+#agent-panel details.step-code pre {
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
     border-radius: 10px;
-    padding: 12px;
-    margin: 10px 0;
+    padding: 10px 12px;
+    font-size: .76rem;
+    max-height: 320px;
+    overflow: auto;
 }
-
-.source-card.src-eu {
-    border-left-color: #2563eb;
+#agent-panel details.step-code pre code {
+    background: transparent !important;
+    color: #e2e8f0 !important;
+    padding: 0;
 }
-
-.source-card.src-nist {
-    border-left-color: #0d9488;
-}
-
-.source-heading {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-size: .85rem;
-}
-
-.source-badge {
-    background: #4338ca;
-    color: white;
-    border-radius: 999px;
-    padding: 2px 8px;
-}
-
-.src-eu .source-badge {
-    background: #2563eb;
-}
-
-.src-nist .source-badge {
-    background: #0d9488;
-}
-
-.score {
-    color: #64748b;
-    margin-left: auto;
-}
-
-.source-status {
+#mode-row {
     margin-top: 6px;
-    color: #64748b;
-    font-size: .78rem;
-    overflow-wrap: anywhere;
-}
-
-.source-text {
-    margin-top: 8px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    line-height: 1.6;
-    font-size: .88rem;
 }
 """
 
 
-# ---------- Layout ----------
+# =========================================================
+# GRADIO UI
+# =========================================================
 
-with gr.Blocks(title="AI Regulation Assistant") as demo:
+with gr.Blocks(
+    title="AI Regulation Assistant"
+) as demo:
+
+
+    # =====================================================
+    # HEADER
+    # =====================================================
+
     gr.HTML(
         """
         <div id="hero">
-            <h1>AI Regulation Assistant</h1>
-            <p>Ask questions about the EU AI Act and NIST AI RMF,
-            then inspect the passages behind the answer.</p>
-            <span class="pill">EU AI Act 2024/1689</span>
-            <span class="pill">NIST AI RMF 1.0</span>
+
+            <h1>
+                🤖 AI Regulation Assistant
+            </h1>
+
+            <p>
+                Ask questions about the
+                <b>EU AI Act</b>
+                and
+                <b>NIST AI Risk Management Framework</b>.
+                The Agent Steps panel shows every tool
+                and agent used, with the code of each step.
+            </p>
+
+            <span class="pill">
+                🇪🇺 EU AI Act
+            </span>
+
+            <span class="pill">
+                🇺🇸 NIST AI RMF
+            </span>
+
+            <span class="pill">
+                🔍 Agentic RAG
+            </span>
+
         </div>
         """
     )
 
+
+    # =====================================================
+    # CHATBOT
+    # =====================================================
+
     chatbot = gr.Chatbot(
         elem_id="chat",
-        height=480,
+
+        height=500,
+
         show_label=False,
-        sanitize_html=True,
-        placeholder="Ask your first question below.",
+
+        placeholder=(
+            "<div style='text-align:center;color:#64748b'>"
+            "<div style='font-size:2.4rem'>🤖</div>"
+            "<b>Ask your first question</b><br>"
+            "The answer appears here and the agent actions "
+            "appear below."
+            "</div>"
+        ),
     )
 
-    with gr.Row(elem_id="input-row"):
+
+    # =====================================================
+    # AGENT STEPS PANEL
+    # =====================================================
+
+    with gr.Accordion(
+        "🤖 Agent Steps",
+        open=True
+    ):
+
+        agent_steps = gr.Markdown(
+            value=(
+                "### 🤖 Agent Steps\n\n"
+                "Ask a question to see the agent's actions."
+            ),
+
+            elem_id="agent-panel"
+        )
+
+
+    # =====================================================
+    # AGENT MODE
+    # =====================================================
+
+    with gr.Row(elem_id="mode-row"):
+        mode = gr.Radio(
+            MODES,
+            value=MODES[0],
+            label="Agent mode",
+            info="Single agent with 6 tools, or a coordinator "
+                 "with EU AI Act and NIST specialist agents.",
+        )
+
+
+    # =====================================================
+    # INPUT
+    # =====================================================
+
+    with gr.Row(
+        elem_id="input-row",
+        equal_height=True
+    ):
+
         question = gr.Textbox(
             show_label=False,
-            placeholder="Type your question and press Enter…",
+
+            placeholder=(
+                "Ask about the EU AI Act or NIST AI RMF..."
+            ),
+
             lines=1,
+
             max_lines=4,
+
             scale=8,
+
+            container=False,
+
             autofocus=True,
         )
-        send = gr.Button("Send", variant="primary", scale=1)
-        clear = gr.Button("Clear", scale=1)
 
-    gr.Markdown(
-        "Each question is answered independently. "
-        "Include the context needed for follow-up questions."
-    )
 
-    gr.Markdown("**Try an example:**")
-
-    with gr.Row(elem_id="examples"):
-        example_buttons = [
-            gr.Button(text, size="sm") for text in EXAMPLES
-        ]
-
-    sources_panel = gr.HTML(value="", visible=False)
-
-    # Share one queue group to avoid overlapping answer-generation callbacks.
-    event_options = {
-        "concurrency_id": "rag_requests",
-        "concurrency_limit": 1,
-    }
-
-    ask_events = [
-        question.submit(
-            respond,
-            inputs=[question, chatbot],
-            outputs=[question, chatbot, sources_panel],
-            **event_options,
-        ),
-        send.click(
-            respond,
-            inputs=[question, chatbot],
-            outputs=[question, chatbot, sources_panel],
-            **event_options,
-        ),
-    ]
-
-    for button in example_buttons:
-        ask_events.append(
-            button.click(
-                use_example,
-                inputs=[button, chatbot],
-                outputs=[question, chatbot, sources_panel],
-                **event_options,
-            )
+        send = gr.Button(
+            "Send ➤",
+            variant="primary",
+            scale=1,
+            elem_id="send-btn"
         )
 
+
+        clear = gr.Button(
+            "🗑️ Clear",
+            variant="secondary",
+            scale=1
+        )
+
+
+    # =====================================================
+    # EXAMPLES
+    # =====================================================
+
+    gr.Markdown(
+        "**Try one of these:**"
+    )
+
+
+    with gr.Row(
+        elem_id="examples"
+    ):
+
+        example_buttons = [
+            gr.Button(
+                example,
+                size="sm"
+            )
+
+            for example in EXAMPLES
+        ]
+
+
+    # =====================================================
+    # ENTER KEY
+    # =====================================================
+
+    enter_event = question.submit(
+        respond,
+
+        [
+            question,
+            chatbot,
+            mode
+        ],
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ]
+    )
+
+
+    # =====================================================
+    # SEND BUTTON
+    # =====================================================
+
+    send_event = send.click(
+        respond,
+
+        [
+            question,
+            chatbot,
+            mode
+        ],
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ]
+    )
+
+
+    ask_events = [
+        enter_event,
+        send_event
+    ]
+
+
+    # =====================================================
+    # EXAMPLE BUTTONS
+    # =====================================================
+
+    for button in example_buttons:
+
+        event = button.click(
+            use_example,
+
+            [
+                button,
+                chatbot,
+                mode
+            ],
+
+            [
+                question,
+                chatbot,
+                agent_steps
+            ]
+        )
+
+        ask_events.append(
+            event
+        )
+
+
+    # =====================================================
+    # CLEAR BUTTON
+    # =====================================================
+
     clear.click(
-        fn=lambda: ("", [], gr.update(value="", visible=False)),
-        inputs=None,
-        outputs=[question, chatbot, sources_panel],
+        clear_all,
+
+        None,
+
+        [
+            question,
+            chatbot,
+            agent_steps
+        ],
+
         queue=False,
+
         cancels=ask_events,
     )
 
 
+# =========================================================
+# FORCE LIGHT THEME
+# =========================================================
+
+FORCE_LIGHT = """
+() => {
+
+    const url = new URL(window.location);
+
+    if (
+        url.searchParams.get('__theme')
+        !==
+        'light'
+    ) {
+
+        url.searchParams.set(
+            '__theme',
+            'light'
+        );
+
+        window.location.href =
+            url.href;
+    }
+}
+"""
+
+
+# =========================================================
+# START
+# =========================================================
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    demo.queue().launch(theme=THEME, css=CSS)
+
+    demo.launch(
+        theme=THEME,
+        css=CSS,
+        js=FORCE_LIGHT
+    )
