@@ -122,7 +122,9 @@ COUNT_TERM_TOOL = {
             "document, and the pages with the most mentions, each with a "
             "snippet. Use it for 'how many times / how many pages' questions "
             "and to locate exact terms such as 'Article 99' or 'GOVERN 1.2'. "
-            "No meaning-based matching: use search_corpus for that."
+            "Call it ONCE without 'source' to get the count in each document "
+            "AND the total (no addition needed). No meaning-based matching: "
+            "use search_corpus for that."
         ),
         "parameters": {
             "type": "object",
@@ -153,7 +155,7 @@ COUNT_TERM_TOOL = {
 def main() -> None:
     """Usage: python app/term_counter.py "term" [source]"""
     if len(sys.argv) < 2:
-        print(__doc__)
+        print("Usage: python app/term_counter.py \"term\" [source.pdf]")
         return
 
     term = sys.argv[1]

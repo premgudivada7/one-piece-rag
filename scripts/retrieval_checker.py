@@ -1,16 +1,3 @@
-"""Inspect retrieval for one question.
-
-Shows the top-k chunks (source, page, score, text) and, when the
-question is in data/questions.json, whether the expected pages were
-retrieved (✅) or missed (❌).
-
-Usage:
-    python scripts/retrieval_checker.py "What is a high-risk AI system?"
-    python scripts/retrieval_checker.py --id 3        # question 3 of questions.json
-    python scripts/retrieval_checker.py --id 3 -k 5   # only look at the top 5
-
-Cost: one embedding call per run (a tiny fraction of a cent).
-"""
 
 import argparse
 import json
@@ -54,7 +41,9 @@ def expected_pages(entry: dict | None) -> set[tuple[str, int]]:
 # ---------- Main ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Show the chunks retrieved for one question."
+    )
     parser.add_argument("question", nargs="?", help="question text")
     parser.add_argument("--id", type=int, help="index in questions.json (0-based)")
     parser.add_argument("-k", type=int, default=TOP_K, help="chunks to retrieve")
@@ -97,7 +86,7 @@ def main() -> None:
     if not expected:
         print("No expected chunks for this question "
               f"({entry['category']}): the answer should be a refusal.")
-        print(f"Top score: {results[0]['score']:.4f} "
+        print(f"Top score: {max(r['score'] for r in results):.4f} "
               "(a low score suggests the corpus does not cover it)")
         return
 

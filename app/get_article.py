@@ -166,7 +166,8 @@ GET_ARTICLE_TOOL = {
             "numbered paragraph, e.g. article=99, paragraph=3 for Article "
             "99(3), or one definition point, e.g. article=3, paragraph=4. "
             "Use it whenever the question names an Article, instead of "
-            "relying on search excerpts."
+            "relying on search excerpts. EU AI Act only: never use it for "
+            "NIST AI RMF questions."
         ),
         "parameters": {
             "type": "object",
@@ -190,7 +191,7 @@ GET_ARTICLE_TOOL = {
 def main() -> None:
     """Usage: python app/get_article.py ARTICLE [PARAGRAPH]"""
     if len(sys.argv) < 2 or not sys.argv[1].isdigit():
-        print(__doc__)
+        print("Usage: python app/get_article.py ARTICLE [PARAGRAPH]   e.g. 99 3")
         return
 
     article = int(sys.argv[1])

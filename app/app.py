@@ -1,17 +1,25 @@
 import html
 import json
+import time
 
 import gradio as gr
 
 from agent import FALLBACK_MESSAGE, run_agent
+from generate_answer import generate_answer
 from multi_agent import run_multi_agent
+from retrieval import SEARCH_MODE, TOP_K, retrieve
+from send_message import approve, reject
 
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 
-MODES = ["🤖 Single agent", "👥 Multi-agent team"]
+MODES = [
+    "🤖 Single agent",
+    "👥 Multi-agent team",
+    "📚 RAG pipeline (no agent)",
+]
 
 EXAMPLES = [
     "What is the fine in Article 99(3), what is half of it, and how "
@@ -20,6 +28,8 @@ EXAMPLES = [
     "and what is the total?",
     "What are the four core functions of the NIST AI RMF?",
     "What is the difference between a provider and a deployer?",
+    "What are the four core functions of the NIST AI RMF? "
+    "Send the answer to our Slack channel.",
 ]
 
 TOOL_ICONS = {
@@ -29,6 +39,7 @@ TOOL_ICONS = {
     "count_term": "🔢",
     "calculator": "🧮",
     "date_tool": "📅",
+    "send_message": "📤",
     "ask_eu_ai_act_agent": "🇪🇺",
     "ask_nist_ai_rmf_agent": "🇺🇸",
 }
@@ -198,34 +209,126 @@ def tools_line(run: dict, multi: bool) -> str:
 
 
 # =========================================================
+# RAG PIPELINE PANEL (no agent)
+# =========================================================
+
+def format_rag_run(chunks: list, seconds: float) -> str:
+    """Steps panel for the fixed RAG pipeline: retrieve, then generate."""
+    lines = [
+        "### 📚 RAG pipeline — no agent",
+        "",
+        f"**Fixed steps:** retrieve (top {TOP_K}, {SEARCH_MODE} search) "
+        f"→ generate_answer (gpt-4o-mini) · **Time:** {seconds} s",
+        "",
+        "#### Step 1 · 🔍 retrieve",
+        "",
+    ]
+    for number, chunk in enumerate(chunks, start=1):
+        ranks = (f"vector rank {chunk.get('vector_rank')}, "
+                 f"keyword rank {chunk.get('keyword_rank') or '—'}")
+        lines += [
+            f"**[{number}]** `{chunk['source']}` — page **{chunk['page']}** "
+            f"— similarity {chunk['score']:.3f} ({ranks})",
+            "",
+            code_dropdown({"tool": "retrieved passage",
+                           "arguments": {"rank": number},
+                           "result": {"text": chunk["text"]}}),
+            "",
+        ]
+    lines += ["#### Step 2 · ✍️ generate_answer", "",
+              "The model answers only from the passages above, citing [1]–"
+              f"[{len(chunks)}].", ""]
+    return "\n".join(lines)
+
+
+# =========================================================
+# HUMAN APPROVAL FOR send_message
+# =========================================================
+
+def approval_view(pending: list):
+    """Show the first proposed message with Yes/No buttons, or hide the box."""
+    if not pending:
+        return [], gr.update(visible=False), ""
+
+    proposal = pending[0]
+    quoted = "\n".join(f"> {line}" if line else ">"
+                       for line in proposal["text"].splitlines())
+    text = (
+        "### 📤 The agent wants to send this message\n\n"
+        f"**Destination:** {proposal['backend']} · "
+        f"**Proposal:** `{proposal['proposal_id']}`\n\n"
+        f"{quoted}\n\n"
+        "Nothing is sent until you click **✅ Yes, send it**."
+    )
+    return pending, gr.update(visible=True), text
+
+
+def decide_message(pending: list, history: list, send_it: bool):
+    """The person's decision: send the proposed message, or cancel it."""
+    if not pending:
+        return (history, *approval_view([]))
+
+    proposal = pending[0]
+
+    if send_it:
+        result = approve(proposal["proposal_id"])
+        note = ("📤 Message sent ✅" if result.get("ok")
+                else f"⚠️ Sending failed: {result.get('error')}")
+    else:
+        reject(proposal["proposal_id"])
+        note = "❌ Message cancelled: nothing was sent."
+
+    history = history + [{"role": "assistant", "content": note}]
+    return (history, *approval_view(pending[1:]))
+
+
+# =========================================================
 # CHAT LOGIC
 # =========================================================
 
 def respond(message: str, history: list, mode: str):
-    """Run the selected agent and show its answer and steps."""
+    """Run the selected mode and show its answer, steps and approvals.
+
+    Yields: question box, chat, steps panel, pending proposals,
+    approval box visibility, approval text.
+    """
     message = (message or "").strip()
 
     if not message:
-        yield "", history, WAITING_PANEL
+        yield ("", history, WAITING_PANEL, *approval_view([]))
         return
 
     multi = mode == MODES[1]
+    rag = mode == MODES[2]
 
     history = history + [
         {"role": "user", "content": message},
-        {"role": "assistant", "content": "🤖 Agent is working..."},
+        {"role": "assistant", "content": "🤖 Working..."},
     ]
 
-    yield (
-        "",
-        history,
-        "### 🤖 Agent Steps\n\n⏳ The "
-        + ("coordinator is asking the specialist agents"
-           if multi else "agent is choosing which tools to use")
-        + "...",
-    )
+    if rag:
+        status = "retrieving passages and generating the answer"
+    elif multi:
+        status = "coordinator is asking the specialist agents"
+    else:
+        status = "agent is choosing which tools to use"
+
+    yield ("", history, f"### 🤖 Agent Steps\n\n⏳ The {status}...",
+           *approval_view([]))
 
     try:
+        if rag:
+            started = time.time()
+            chunks = retrieve(message)
+            answer = generate_answer(message, chunks) or FALLBACK_MESSAGE
+            history[-1]["content"] = (
+                f"{answer}\n\n<sub>📚 RAG pipeline: retrieve → "
+                "generate_answer</sub>"
+            )
+            panel = format_rag_run(chunks, round(time.time() - started, 2))
+            yield ("", history, panel, *approval_view([]))
+            return
+
         run = run_multi_agent(message) if multi else run_agent(message)
         answer = run["answer"] or FALLBACK_MESSAGE
 
@@ -233,14 +336,16 @@ def respond(message: str, history: list, mode: str):
             f"{answer}\n\n<sub>{html.escape(tools_line(run, multi))}</sub>"
         )
         panel = format_multi_run(run) if multi else format_single_run(run)
-        yield "", history, panel
+        yield ("", history, panel,
+               *approval_view(run.get("pending_messages", [])))
 
     except Exception as error:  # Show errors in the chat, not a crash.
         history[-1]["content"] = f"⚠️ Something went wrong: {error}"
         yield (
             "",
             history,
-            "### 🤖 Agent Steps\n\n❌ An error occurred while running the agent.",
+            "### 🤖 Agent Steps\n\n❌ An error occurred while running.",
+            *approval_view([]),
         )
 
 
@@ -257,7 +362,7 @@ def use_example(example: str, history: list, mode: str):
 # =========================================================
 
 def clear_all():
-    return "", [], WAITING_PANEL
+    return ("", [], WAITING_PANEL, *approval_view([]))
 
 
 # =========================================================
@@ -514,6 +619,17 @@ body,
     color: #e2e8f0 !important;
     padding: 0;
 }
+#approval-box {
+    border: 2px solid #f59e0b !important;
+    background: #fffbeb !important;
+    border-radius: 16px !important;
+    padding: 10px 16px !important;
+}
+#approval-box blockquote {
+    background: white;
+    border-left: 4px solid #f59e0b;
+    padding: 6px 12px;
+}
 #mode-row {
     margin-top: 6px;
 }
@@ -590,6 +706,19 @@ with gr.Blocks(
 
 
     # =====================================================
+    # HUMAN APPROVAL (send_message)
+    # =====================================================
+
+    pending = gr.State([])
+
+    with gr.Group(visible=False, elem_id="approval-box") as approval_box:
+        approval_text = gr.Markdown()
+        with gr.Row():
+            yes_button = gr.Button("✅ Yes, send it", variant="primary")
+            no_button = gr.Button("❌ No, cancel", variant="stop")
+
+
+    # =====================================================
     # AGENT STEPS PANEL
     # =====================================================
 
@@ -616,9 +745,9 @@ with gr.Blocks(
         mode = gr.Radio(
             MODES,
             value=MODES[0],
-            label="Agent mode",
-            info="Single agent with 6 tools, or a coordinator "
-                 "with EU AI Act and NIST specialist agents.",
+            label="Mode",
+            info="Single agent with its tools, a coordinator with EU AI Act "
+                 "and NIST specialist agents, or the original RAG pipeline.",
         )
 
 
@@ -704,7 +833,10 @@ with gr.Blocks(
         [
             question,
             chatbot,
-            agent_steps
+            agent_steps,
+            pending,
+            approval_box,
+            approval_text
         ]
     )
 
@@ -725,7 +857,10 @@ with gr.Blocks(
         [
             question,
             chatbot,
-            agent_steps
+            agent_steps,
+            pending,
+            approval_box,
+            approval_text
         ]
     )
 
@@ -754,13 +889,33 @@ with gr.Blocks(
             [
                 question,
                 chatbot,
-                agent_steps
+                agent_steps,
+                pending,
+                approval_box,
+                approval_text
             ]
         )
 
         ask_events.append(
             event
         )
+
+
+    # =====================================================
+    # YES / NO FOR PROPOSED MESSAGES
+    # =====================================================
+
+    yes_button.click(
+        lambda proposals, history: decide_message(proposals, history, True),
+        [pending, chatbot],
+        [chatbot, pending, approval_box, approval_text],
+    )
+
+    no_button.click(
+        lambda proposals, history: decide_message(proposals, history, False),
+        [pending, chatbot],
+        [chatbot, pending, approval_box, approval_text],
+    )
 
 
     # =====================================================
@@ -775,7 +930,10 @@ with gr.Blocks(
         [
             question,
             chatbot,
-            agent_steps
+            agent_steps,
+            pending,
+            approval_box,
+            approval_text
         ],
 
         queue=False,

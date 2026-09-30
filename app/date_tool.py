@@ -82,6 +82,22 @@ def date_tool(operation: str, start: str | None = None,
             }
 
     days = (dates["end"] - dates["start"]).days
+    today = date.today()
+
+    # A plain sentence, so the model cannot mix up "ago" and "from now".
+    def words(day: date) -> str:
+        return f"{day.day} {day:%B %Y}"
+
+    start, end = dates["start"], dates["end"]
+    if end == today and start != today:
+        plain = (f"{words(start)} was {days} days ago (in the past)" if days > 0
+                 else f"{words(start)} is {-days} days from now (in the future)")
+    elif start == today and end != today:
+        plain = (f"{words(end)} is {days} days from now (in the future)" if days > 0
+                 else f"{words(end)} was {-days} days ago (in the past)")
+    else:
+        plain = (f"{words(end)} is {abs(days)} days "
+                 f"{'after' if days >= 0 else 'before'} {words(start)}")
 
     return {
         "ok": True,
@@ -92,6 +108,7 @@ def date_tool(operation: str, start: str | None = None,
         "direction": ("end is after start" if days > 0 else
                       "end is before start" if days < 0 else "same day"),
         "approximately": describe(days),
+        "plain": plain,
     }
 
 
@@ -131,7 +148,8 @@ DATE_TOOL = {
 def main() -> None:
     """Usage: python app/date_tool.py today | days_between START END"""
     if len(sys.argv) < 2:
-        print(__doc__)
+        print("Usage: python app/date_tool.py today\n"
+              "       python app/date_tool.py days_between 2024-08-01 \"2 August 2026\"")
         return
 
     operation = sys.argv[1]

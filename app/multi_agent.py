@@ -18,6 +18,7 @@ from calculator import calculator
 from date_tool import date_tool
 from get_article import get_article
 from quote_exact import quote_exact
+from send_message import SEND_MESSAGE_TOOL, propose_message
 from term_counter import count_term
 from retrieval import load_data, retrieve
 
@@ -68,7 +69,7 @@ def make_search(source: str):
 
         chunks = [c for c in pool if c["source"] == source][:k]
 
-        if not chunks or chunks[0]["score"] < MIN_SCORE:
+        if not chunks or max(c["score"] for c in chunks) < MIN_SCORE:
             return {
                 "ok": False,
                 "query": query.strip(),
@@ -206,7 +207,9 @@ You are the {document['title']} specialist. You can only see
 
 Rules:
 1. Search your document before answering. For several parts, search each.
-2. If a search returns ok=false, rephrase and try again (at most 2 retries).
+2. If a search returns ok=false or irrelevant passages, rephrase and try
+   again (at most 2 retries): use the distinctive words of the expected
+   answer, leave out the document name, and ask for k=10.
 3. Use ONLY the tool results. No outside knowledge.
 4. When the question names an Article or section, or passages give
    different values, confirm which Article or section each value comes
@@ -219,6 +222,8 @@ Rules:
 7. If your document does not contain the answer, reply exactly:
    "{document['source']} does not contain information about this."
 8. Be concise: give the facts the coordinator needs, with citations.
+   Every sentence must be supported by a tool result: add no explanations
+   or descriptions that the passages do not contain.
 """.strip()
 
 
@@ -247,6 +252,9 @@ How to work:
 6. Greetings or questions about what you can do: answer briefly without tools.
 7. Remember the documents have different legal status: the EU AI Act is
    binding law, the NIST AI RMF is voluntary guidance.
+8. send_message: ONLY if the user explicitly asks to send/post/share the
+   answer. Call it once with the final combined answer and citations; it
+   only proposes the message, a person must approve it.
 """.strip()
 
 
@@ -315,12 +323,13 @@ def run_multi_agent(question: str) -> dict:
     specialist_runs: list[dict] = []
 
     tools = [specialist_tool_schema(d) for d in DOCUMENTS.values()]
-    tools += [CALCULATOR_TOOL, DATE_TOOL]
+    tools += [CALCULATOR_TOOL, DATE_TOOL, SEND_MESSAGE_TOOL]
 
     functions = {d["tool_name"]: make_specialist(d, specialist_runs)
                  for d in DOCUMENTS.values()}
     functions["calculator"] = calculator
     functions["date_tool"] = date_tool
+    functions["send_message"] = propose_message   # only proposes
 
     coordinator = run_agent(
         question,
@@ -342,6 +351,7 @@ def run_multi_agent(question: str) -> dict:
         "agents_used": sorted({r["agent"] for r in specialist_runs}),
         "coordinator_steps": coordinator["steps"],
         "specialist_runs": specialist_runs,
+        "pending_messages": coordinator["pending_messages"],
         "model_calls": coordinator["model_calls"]
                        + sum(r["model_calls"] for r in specialist_runs),
         "seconds": round(time.time() - started, 2),

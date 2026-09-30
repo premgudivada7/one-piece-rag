@@ -1,25 +1,11 @@
-"""Run every question in data/questions.json and print a scorecard.
 
-For each question it logs the retrieved chunks, whether the expected
-pages were retrieved, the generated answer, and a pass/fail verdict.
-Results are saved to data/eval_results.json so runs can be compared.
-
-Usage:
-    python scripts/eval_runner.py --retrieval-only   # embeddings only, almost free
-    python scripts/eval_runner.py                    # + answers (check them by hand)
-    python scripts/eval_runner.py --judge            # + LLM-as-judge verdicts
-    python scripts/eval_runner.py --priority         # only the 5 priority questions
-
-Approximate cost for all 40 questions: under $0.01 with --retrieval-only,
-around $0.02 with answers, around $0.03 with --judge.
-"""
 
 import argparse
 import json
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -29,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 QUESTIONS_FILE = DATA_DIR / "questions.json"
 RESULTS_FILE = DATA_DIR / "eval_results.json"
+AGENT_RESULTS_FILE = DATA_DIR / "eval_results_agent.json"
 
 FALLBACK_MESSAGE = (
     "I don't have enough information in the provided "
@@ -40,6 +27,7 @@ REFUSAL_CATEGORIES = {"out-of-scope"}
 
 # Use the same code as the app.
 sys.path.insert(0, str(PROJECT_ROOT / "app"))
+import retrieval as retrieval_module  # noqa: E402
 from retrieval import TOP_K, retrieve  # noqa: E402
 
 
@@ -89,7 +77,10 @@ def judge_answer(question: str, expected: str, answer: str) -> dict:
                     "the key facts of the expected answer and nothing that "
                     "contradicts it, 'partial' if it has some key facts but "
                     "misses others, 'incorrect' if it is wrong, refuses, or "
-                    "misses the main point. Ignore citation markers like [1]."
+                    "misses the main point. Never mark an answer partial or "
+                    "incorrect only because it contains extra information. "
+                    "Ignore citation markers like [1] and (file.pdf, p. N). "
+                    f"Today's date is {date.today():%d %B %Y}."
                 ),
             },
             {
@@ -164,6 +155,49 @@ def decide(entry: dict, retrieval: dict, answer: str | None,
     return "fail", f"generation error: {judgement['reason']}"
 
 
+# ---------- Agent evaluation ----------
+
+def pages_seen_by_agent(run: dict) -> list[dict]:
+    """Every (source, page) the agent's tools returned, plus its citations.
+
+    Used as the agent's "retrieved chunks": if an expected page is here,
+    the agent found the right evidence.
+    """
+    seen = []
+
+    def add(source, page):
+        item = {"source": source, "page": page, "score": None}
+        if source and page and item not in seen:
+            seen.append(item)
+
+    for step in run.get("steps", []):
+        result = step.get("result") or {}
+        if not result.get("ok"):
+            continue
+        for item in result.get("results", []):          # search_corpus
+            add(item.get("source"), item.get("page"))
+        if step["tool"] == "quote_exact":
+            add(result.get("source"), result.get("page"))
+        if step["tool"] == "get_article":
+            for page in result.get("pages", []):
+                add(result.get("source"), page)
+
+    for citation in run.get("citations", []):
+        add(citation["source"], citation["page"])
+
+    return seen
+
+
+def tools_check(entry: dict, run: dict) -> dict | None:
+    """Did the agent use the tools a multi-step question needs?"""
+    expected = entry.get("expected_tools")
+    if not expected:
+        return None
+    used = {step["tool"] for step in run.get("steps", [])}
+    missing = [tool for tool in expected if tool not in used]
+    return {"expected": expected, "used": sorted(used), "missing": missing}
+
+
 # ---------- Scorecard ----------
 
 def rate(values: list) -> str:
@@ -232,7 +266,9 @@ def print_summary(summary: dict, rows: list[dict]) -> None:
 # ---------- Main ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Run the evaluation questions and print a scorecard."
+    )
     parser.add_argument("--retrieval-only", action="store_true",
                         help="skip answer generation (cheapest)")
     parser.add_argument("--judge", action="store_true",
@@ -240,12 +276,24 @@ def main() -> None:
     parser.add_argument("--priority", action="store_true",
                         help="only run the priority questions")
     parser.add_argument("-k", type=int, default=TOP_K, help="chunks to retrieve")
+    parser.add_argument("--search", choices=["hybrid", "vector"],
+                        default=retrieval_module.SEARCH_MODE,
+                        help="retrieval mode to evaluate (default: hybrid)")
+    parser.add_argument("--agent", action="store_true",
+                        help="run each question through the agent (agent.py)")
+    parser.add_argument("--questions", default=str(QUESTIONS_FILE),
+                        help="questions file (default: data/questions.json)")
     args = parser.parse_args()
 
-    if not args.retrieval_only:
+    retrieval_module.SEARCH_MODE = args.search
+
+    if args.agent:
+        from agent import run_agent
+        args.retrieval_only = False
+    elif not args.retrieval_only:
         from generate_answer import generate_answer
 
-    questions = json.loads(QUESTIONS_FILE.read_text(encoding="utf-8"))
+    questions = json.loads(Path(args.questions).read_text(encoding="utf-8"))
     selected = [
         (i, q) for i, q in enumerate(questions)
         if not args.priority or q.get("priority")
@@ -256,20 +304,35 @@ def main() -> None:
         print(f"[{number}/{len(selected)}] #{i} {entry['question'][:70]}")
         start = time.time()
 
-        results = retrieve(entry["question"], k=args.k)
-        retrieval = retrieval_check(entry, results)
-
+        run = None
         answer = None
         judgement = None
-        if not args.retrieval_only:
-            answer = generate_answer(entry["question"], results)
-            if (args.judge and entry.get("expected_answer")
-                    and not is_refusal(answer)):
-                judgement = judge_answer(
-                    entry["question"], entry["expected_answer"], answer
-                )
+
+        if args.agent:
+            # The agent chooses its own tools; its "retrieved chunks" are
+            # the pages its tools returned and the pages it cited.
+            run = run_agent(entry["question"])
+            results = pages_seen_by_agent(run)
+            answer = run["answer"] or ""
+        else:
+            # Fixed RAG pipeline: retrieve, then (optionally) generate.
+            results = retrieve(entry["question"], k=args.k)
+            if not args.retrieval_only:
+                answer = generate_answer(entry["question"], results)
+
+        retrieval = retrieval_check(entry, results)
+
+        if (answer is not None and args.judge
+                and entry.get("expected_answer") and not is_refusal(answer)):
+            judgement = judge_answer(
+                entry["question"], entry["expected_answer"], answer
+            )
 
         status, reason = decide(entry, retrieval, answer, judgement)
+
+        tools = tools_check(entry, run) if run else None
+        if tools and tools["missing"] and status == "pass":
+            status, reason = "fail", f"agent did not use: {', '.join(tools['missing'])}"
 
         rows.append({
             "id": i,
@@ -279,10 +342,12 @@ def main() -> None:
             "difficulty": entry["difficulty"],
             "priority": entry.get("priority", False),
             "retrieval": retrieval,
-            "top_score": results[0]["score"] if results else None,
+            "top_score": max((c["score"] for c in results
+                              if c.get("score") is not None), default=None),
             "retrieved": [
                 {"source": c["source"], "page": c["page"],
-                 "score": round(c["score"], 4)}
+                 "score": (round(c["score"], 4)
+                           if c.get("score") is not None else None)}
                 for c in results
             ],
             "answer": answer,
@@ -291,17 +356,31 @@ def main() -> None:
             "status": status,
             "reason": reason,
             "seconds": round(time.time() - start, 2),
+            "agent": None if run is None else {
+                "tools": [step["tool"] for step in run["steps"]],
+                "tools_check": tools,
+                "model_calls": run["model_calls"],
+                "stop_reason": run["stop_reason"],
+            },
         })
 
     summary = build_summary(rows)
     print_summary(summary, rows)
 
-    RESULTS_FILE.write_text(
+    results_file = AGENT_RESULTS_FILE if args.agent else RESULTS_FILE
+    # One results file per questions file, so runs don't overwrite each other.
+    stem = Path(args.questions).stem
+    if stem != "questions":
+        results_file = results_file.with_name(f"{results_file.stem}_{stem}.json")
+    results_file.write_text(
         json.dumps(
             {
                 "run_at": datetime.now().isoformat(timespec="seconds"),
                 "settings": {
                     "top_k": args.k,
+                    "search": args.search,
+                    "agent": args.agent,
+                    "questions": Path(args.questions).name,
                     "retrieval_only": args.retrieval_only,
                     "judge": args.judge,
                     "priority_only": args.priority,
@@ -314,7 +393,7 @@ def main() -> None:
         ) + "\n",
         encoding="utf-8",
     )
-    print(f"\nSaved: {RESULTS_FILE.relative_to(PROJECT_ROOT)}")
+    print(f"\nSaved: {results_file.relative_to(PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

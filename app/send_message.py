@@ -27,6 +27,7 @@ is used.
 Terminal:
     python app/send_message.py --check        show which backend is configured
     python app/send_message.py "Hello team"   preview, then ask yes/no
+    python app/send_message.py --file message.txt   same, text from a file
 """
 
 import asyncio
@@ -335,7 +336,9 @@ def ask_yes_no(prompt: str) -> bool:
 def main() -> None:
     """Preview a message, ask for approval, then send or cancel."""
     if len(sys.argv) < 2:
-        print(__doc__)
+        print("Usage: python app/send_message.py --check\n"
+              "       python app/send_message.py \"message text\"\n"
+              "       python app/send_message.py --file message.txt")
         return
 
     if sys.argv[1] == "--check":
@@ -343,7 +346,15 @@ def main() -> None:
         print(f"Configured backend: {backend or 'none (add settings to .env)'}")
         return
 
-    proposal = propose_message(" ".join(sys.argv[1:]))
+    if sys.argv[1] == "--file":
+        if len(sys.argv) < 3:
+            print("Usage: python app/send_message.py --file message.txt")
+            return
+        text = Path(sys.argv[2]).read_text(encoding="utf-8")
+    else:
+        text = " ".join(sys.argv[1:])
+
+    proposal = propose_message(text)
     if not proposal["ok"]:
         print(f"Cannot propose: {proposal['error']}")
         return
