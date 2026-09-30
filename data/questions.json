@@ -1,0 +1,150 @@
+[
+  {
+    "question": "What is the date of Regulation (EU) 2024/1689?",
+    "category": "factual",
+    "sub_type": "single-hop",
+    "difficulty": "easy",
+    "priority": true,
+    "expected_chunks": [
+      {
+        "source": "eu_ai_act_2024.pdf",
+        "page": 1
+      }
+    ],
+    "expected_answer": "13 June 2024",
+    "expected_tools": [
+      "search_corpus"
+    ]
+  },
+  {
+    "question": "Quote exactly from page 1 of eu_ai_act_2024.pdf the sentence beginning 'The purpose of this Regulation is to improve the functioning of the internal market'.",
+    "category": "quotation",
+    "sub_type": "exact-quote",
+    "difficulty": "easy",
+    "priority": true,
+    "expected_chunks": [
+      {
+        "source": "eu_ai_act_2024.pdf",
+        "page": 1
+      }
+    ],
+    "expected_answer": "The purpose of this Regulation is to improve the functioning of the internal market",
+    "expected_tools": [
+      "quote_exact"
+    ]
+  },
+  {
+    "question": "Use the calculator tool to calculate half of 35,000,000 euros.",
+    "category": "calculation",
+    "sub_type": "calculator",
+    "difficulty": "easy",
+    "priority": true,
+    "expected_chunks": [],
+    "expected_answer": "17500000",
+    "expected_tools": [
+      "calculator"
+    ]
+  },
+  {
+    "question": "What is half of 35,000,000 euros?",
+    "category": "calculation",
+    "sub_type": "autonomous-tool-selection",
+    "difficulty": "medium",
+    "priority": true,
+    "expected_chunks": [],
+    "expected_answer": "17500000",
+    "expected_tools": [
+      "calculator"
+    ]
+  },
+  {
+    "question": "According to Article 99(3) of the EU AI Act, what is half of the maximum fixed administrative fine in euros?",
+    "category": "multi-step",
+    "sub_type": "retrieval-plus-calculation",
+    "difficulty": "medium",
+    "priority": true,
+    "expected_chunks": [
+      {
+        "source": "eu_ai_act_2024.pdf",
+        "page": 115
+      }
+    ],
+    "expected_answer": "17500000",
+    "expected_tools": [
+      "get_article",
+      "calculator"
+    ]
+  },
+  {
+    "question": "How many days ago was 2 August 2026?",
+    "category": "date",
+    "sub_type": "autonomous-date-tool",
+    "difficulty": "medium",
+    "priority": true,
+    "expected_chunks": [],
+    "expected_answer": "59 days",
+    "expected_tools": [
+      "date_tool"
+    ]
+  },
+  {
+    "question": "According to Article 113 of the EU AI Act, how many days ago did the Regulation begin to apply?",
+    "category": "multi-step",
+    "sub_type": "retrieval-plus-date",
+    "difficulty": "hard",
+    "priority": true,
+    "expected_chunks": [
+      {
+        "source": "eu_ai_act_2024.pdf",
+        "page": 123
+      }
+    ],
+    "expected_answer": "59 days",
+    "expected_tools": [
+      "get_article",
+      "date_tool"
+    ]
+  },
+  {
+    "question": "Who won the 2026 FIFA World Cup?",
+    "category": "grounding",
+    "sub_type": "out-of-corpus",
+    "difficulty": "medium",
+    "priority": true,
+    "expected_chunks": [],
+    "expected_answer": "I don't have enough information in the provided documents to answer this question.",
+    "expected_tools": [
+      "search_corpus"
+    ]
+  },
+  {
+    "question": "According to the EU AI Act, what is the administrative fine for wearing a blue shirt?",
+    "category": "grounding",
+    "sub_type": "on-topic-unsupported",
+    "difficulty": "medium",
+    "priority": true,
+    "expected_chunks": [],
+    "expected_answer": "I don't have enough information in the provided documents to answer this question.",
+    "expected_tools": [
+      "search_corpus"
+    ]
+  },
+  {
+    "question": "According to Article 99(3) of the EU AI Act, what is half of the maximum worldwide annual turnover percentage that may be imposed as an administrative fine?",
+    "category": "multi-step",
+    "sub_type": "retrieval-plus-percentage-calculation",
+    "difficulty": "hard",
+    "priority": true,
+    "expected_chunks": [
+      {
+        "source": "eu_ai_act_2024.pdf",
+        "page": 115
+      }
+    ],
+    "expected_answer": "3.5%",
+    "expected_tools": [
+      "get_article",
+      "calculator"
+    ]
+  }
+]

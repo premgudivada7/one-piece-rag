@@ -65,3 +65,70 @@ at temperature 0.
 | Agent, multi-step questions | 5/5 | 6/6 pass |
 
 Open item: #26: the agent adds Article 6(1)'s definition when asked only for dates; correct but more than asked. Total API spend for all evaluation runs: about $0.28 of the $5 budget.
+
+## Agentic RAG Evaluation - 10 Question Test
+
+### Summary
+
+- Total tests: 10
+- Retrieval hit rate: 4/5 (80%)
+- Core tools tested: search_corpus, quote_exact, calculator, get_article, date_tool
+- Multi-step retrieval tests: 3/3 retrieval hits
+
+### Q1 - Retrieval page mismatch
+
+Question:
+What is the date of Regulation (EU) 2024/1689?
+
+Result:
+The answer was correct (13 June 2024), but expected page 1 was not returned in the top-k retrieval results.
+
+Status:
+Needs retrieval investigation. Check whether another retrieved page contains the same valid information before changing retrieval.
+
+### Q8 - False refusal evaluator issue
+
+Question:
+Who won the 2026 FIFA World Cup?
+
+Result:
+The agent correctly returned:
+"I don't have enough information in the provided documents to answer this question."
+
+The saved result had no retrieved pages and no tools were used, but eval_runner reported:
+"false refusal: pages were retrieved but model refused"
+
+Status:
+Evaluator logic issue. False-refusal detection should distinguish between no retrieval, irrelevant retrieval, and relevant retrieval.
+
+### Q9 - Unsupported question grounding failure
+
+Question:
+According to the EU AI Act, what is the administrative fine for wearing a blue shirt?
+
+Expected:
+The agent should say it does not have enough information in the provided documents.
+
+Actual:
+The agent searched the corpus and retrieved real administrative-fine information, but the information was irrelevant to the blue-shirt question. It then answered using those unrelated fines.
+
+Status:
+Agent grounding/relevance issue. Retrieved information must be checked for relevance before it is used to construct an answer.
+
+### Q10 - Multi-step regression test
+
+Question:
+According to Article 99(3) of the EU AI Act, what is half of the maximum worldwide annual turnover percentage that may be imposed as an administrative fine?
+
+Result:
+PASS.
+
+The agent retrieved page 115, used get_article and calculator, and correctly returned 3.5%.
+
+### Main fixes to investigate
+
+1. Q1 - retrieval page mismatch.
+2. Q8 - evaluator false-refusal classification.
+3. Q9 - relevance/grounding for unsupported questions.
+
+Do not change working tool behavior just to make the evaluator green. Q2-Q7 and Q10 worked correctly during manual evaluation.

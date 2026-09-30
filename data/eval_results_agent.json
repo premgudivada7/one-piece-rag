@@ -1,0 +1,622 @@
+{
+  "run_at": "2026-09-30T13:53:50",
+  "settings": {
+    "top_k": 5,
+    "search": "hybrid",
+    "agent": true,
+    "questions": "questions.json",
+    "retrieval_only": false,
+    "judge": false,
+    "priority_only": false
+  },
+  "summary": {
+    "overall": {
+      "questions": 10,
+      "retrieval_hit": "4/5 (80%)",
+      "all_expected_found": "4/5 (80%)",
+      "pass": 0,
+      "fail": 2,
+      "review": 8
+    },
+    "by_category": {
+      "factual": {
+        "questions": 1,
+        "retrieval_hit": "0/1 (0%)",
+        "all_expected_found": "0/1 (0%)",
+        "pass": 0,
+        "fail": 1,
+        "review": 0
+      },
+      "quotation": {
+        "questions": 1,
+        "retrieval_hit": "1/1 (100%)",
+        "all_expected_found": "1/1 (100%)",
+        "pass": 0,
+        "fail": 0,
+        "review": 1
+      },
+      "calculation": {
+        "questions": 2,
+        "retrieval_hit": "n/a",
+        "all_expected_found": "n/a",
+        "pass": 0,
+        "fail": 0,
+        "review": 2
+      },
+      "multi-step": {
+        "questions": 3,
+        "retrieval_hit": "3/3 (100%)",
+        "all_expected_found": "3/3 (100%)",
+        "pass": 0,
+        "fail": 0,
+        "review": 3
+      },
+      "date": {
+        "questions": 1,
+        "retrieval_hit": "n/a",
+        "all_expected_found": "n/a",
+        "pass": 0,
+        "fail": 0,
+        "review": 1
+      },
+      "grounding": {
+        "questions": 2,
+        "retrieval_hit": "n/a",
+        "all_expected_found": "n/a",
+        "pass": 0,
+        "fail": 1,
+        "review": 1
+      }
+    },
+    "by_difficulty": {
+      "easy": {
+        "questions": 3,
+        "retrieval_hit": "1/2 (50%)",
+        "all_expected_found": "1/2 (50%)",
+        "pass": 0,
+        "fail": 1,
+        "review": 2
+      },
+      "medium": {
+        "questions": 5,
+        "retrieval_hit": "1/1 (100%)",
+        "all_expected_found": "1/1 (100%)",
+        "pass": 0,
+        "fail": 1,
+        "review": 4
+      },
+      "hard": {
+        "questions": 2,
+        "retrieval_hit": "2/2 (100%)",
+        "all_expected_found": "2/2 (100%)",
+        "pass": 0,
+        "fail": 0,
+        "review": 2
+      }
+    }
+  },
+  "results": [
+    {
+      "id": 0,
+      "question": "What is the date of Regulation (EU) 2024/1689?",
+      "category": "factual",
+      "sub_type": "single-hop",
+      "difficulty": "easy",
+      "priority": true,
+      "retrieval": {
+        "expected": [
+          [
+            "eu_ai_act_2024.pdf",
+            1
+          ]
+        ],
+        "found": [],
+        "hit": false,
+        "all_found": false,
+        "first_hit_rank": null
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 119,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 120,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 121,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 118,
+          "score": null
+        }
+      ],
+      "answer": "Regulation (EU) 2024/1689 was adopted on 13 June 2024 (eu_ai_act_2024.pdf, p. 119).",
+      "expected_answer": "13 June 2024",
+      "judge": null,
+      "status": "fail",
+      "reason": "retrieval miss: expected pages not in top-k",
+      "seconds": 2.72,
+      "agent": {
+        "tools": [
+          "search_corpus"
+        ],
+        "tools_check": {
+          "expected": [
+            "search_corpus"
+          ],
+          "used": [
+            "search_corpus"
+          ],
+          "missing": []
+        },
+        "model_calls": 2,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 1,
+      "question": "Quote exactly from page 1 of eu_ai_act_2024.pdf the sentence beginning 'The purpose of this Regulation is to improve the functioning of the internal market'.",
+      "category": "quotation",
+      "sub_type": "exact-quote",
+      "difficulty": "easy",
+      "priority": true,
+      "retrieval": {
+        "expected": [
+          [
+            "eu_ai_act_2024.pdf",
+            1
+          ]
+        ],
+        "found": [
+          [
+            "eu_ai_act_2024.pdf",
+            1
+          ]
+        ],
+        "hit": true,
+        "all_found": true,
+        "first_hit_rank": 1
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 1,
+          "score": null
+        }
+      ],
+      "answer": "The sentence you requested is: \"The purpose of this Regulation is to improve the functioning of the internal market by laying down a uniform legal framework in particular for the development, the placing on the market, the putting into service and the use of artificial intelligence systems (AI systems) in the Union, in accordance with Union values, to promote the uptake of human centric and trustworthy artificial intelligence (AI) while ensuring a high level of protection of health, safety, fundamental rights as enshrined in the Charter of Fundamental Rights of the European Union (the ‘Charter’), including democracy, the rule of law and environmental protection, to protect against the harmful effects of AI systems in the Union, and to support innovation.\" (eu_ai_act_2024.pdf, p. 1)",
+      "expected_answer": "The purpose of this Regulation is to improve the functioning of the internal market",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 2.47,
+      "agent": {
+        "tools": [
+          "quote_exact"
+        ],
+        "tools_check": {
+          "expected": [
+            "quote_exact"
+          ],
+          "used": [
+            "quote_exact"
+          ],
+          "missing": []
+        },
+        "model_calls": 2,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 2,
+      "question": "Use the calculator tool to calculate half of 35,000,000 euros.",
+      "category": "calculation",
+      "sub_type": "calculator",
+      "difficulty": "easy",
+      "priority": true,
+      "retrieval": {
+        "expected": [],
+        "found": [],
+        "hit": null,
+        "all_found": null
+      },
+      "top_score": null,
+      "retrieved": [],
+      "answer": "Half of 35,000,000 euros is 17,500,000 euros.",
+      "expected_answer": "17500000",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 1.68,
+      "agent": {
+        "tools": [
+          "calculator"
+        ],
+        "tools_check": {
+          "expected": [
+            "calculator"
+          ],
+          "used": [
+            "calculator"
+          ],
+          "missing": []
+        },
+        "model_calls": 2,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 3,
+      "question": "What is half of 35,000,000 euros?",
+      "category": "calculation",
+      "sub_type": "autonomous-tool-selection",
+      "difficulty": "medium",
+      "priority": true,
+      "retrieval": {
+        "expected": [],
+        "found": [],
+        "hit": null,
+        "all_found": null
+      },
+      "top_score": null,
+      "retrieved": [],
+      "answer": "Half of 35,000,000 euros is 17,500,000 euros.",
+      "expected_answer": "17500000",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 1.73,
+      "agent": {
+        "tools": [
+          "calculator"
+        ],
+        "tools_check": {
+          "expected": [
+            "calculator"
+          ],
+          "used": [
+            "calculator"
+          ],
+          "missing": []
+        },
+        "model_calls": 2,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 4,
+      "question": "According to Article 99(3) of the EU AI Act, what is half of the maximum fixed administrative fine in euros?",
+      "category": "multi-step",
+      "sub_type": "retrieval-plus-calculation",
+      "difficulty": "medium",
+      "priority": true,
+      "retrieval": {
+        "expected": [
+          [
+            "eu_ai_act_2024.pdf",
+            115
+          ]
+        ],
+        "found": [
+          [
+            "eu_ai_act_2024.pdf",
+            115
+          ]
+        ],
+        "hit": true,
+        "all_found": true,
+        "first_hit_rank": 1
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 115,
+          "score": null
+        }
+      ],
+      "answer": "Half of the maximum fixed administrative fine in euros, according to Article 99(3) of the EU AI Act, is €17,500,000 (eu_ai_act_2024.pdf, p. 115).",
+      "expected_answer": "17500000",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 2.64,
+      "agent": {
+        "tools": [
+          "get_article",
+          "calculator"
+        ],
+        "tools_check": {
+          "expected": [
+            "get_article",
+            "calculator"
+          ],
+          "used": [
+            "calculator",
+            "get_article"
+          ],
+          "missing": []
+        },
+        "model_calls": 3,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 5,
+      "question": "How many days ago was 2 August 2026?",
+      "category": "date",
+      "sub_type": "autonomous-date-tool",
+      "difficulty": "medium",
+      "priority": true,
+      "retrieval": {
+        "expected": [],
+        "found": [],
+        "hit": null,
+        "all_found": null
+      },
+      "top_score": null,
+      "retrieved": [],
+      "answer": "2 August 2026 was 59 days ago.",
+      "expected_answer": "59 days",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 1.97,
+      "agent": {
+        "tools": [
+          "date_tool"
+        ],
+        "tools_check": {
+          "expected": [
+            "date_tool"
+          ],
+          "used": [
+            "date_tool"
+          ],
+          "missing": []
+        },
+        "model_calls": 2,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 6,
+      "question": "According to Article 113 of the EU AI Act, how many days ago did the Regulation begin to apply?",
+      "category": "multi-step",
+      "sub_type": "retrieval-plus-date",
+      "difficulty": "hard",
+      "priority": true,
+      "retrieval": {
+        "expected": [
+          [
+            "eu_ai_act_2024.pdf",
+            123
+          ]
+        ],
+        "found": [
+          [
+            "eu_ai_act_2024.pdf",
+            123
+          ]
+        ],
+        "hit": true,
+        "all_found": true,
+        "first_hit_rank": 1
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 123,
+          "score": null
+        }
+      ],
+      "answer": "According to Article 113 of the EU AI Act, the Regulation began to apply on 2 August 2026, which is 59 days ago (eu_ai_act_2024.pdf, p. 123).",
+      "expected_answer": "59 days",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 3.2,
+      "agent": {
+        "tools": [
+          "get_article",
+          "date_tool"
+        ],
+        "tools_check": {
+          "expected": [
+            "get_article",
+            "date_tool"
+          ],
+          "used": [
+            "date_tool",
+            "get_article"
+          ],
+          "missing": []
+        },
+        "model_calls": 3,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 7,
+      "question": "Who won the 2026 FIFA World Cup?",
+      "category": "grounding",
+      "sub_type": "out-of-corpus",
+      "difficulty": "medium",
+      "priority": true,
+      "retrieval": {
+        "expected": [],
+        "found": [],
+        "hit": null,
+        "all_found": null
+      },
+      "top_score": null,
+      "retrieved": [],
+      "answer": "I don't have enough information in the provided documents to answer this question.",
+      "expected_answer": "I don't have enough information in the provided documents to answer this question.",
+      "judge": null,
+      "status": "fail",
+      "reason": "false refusal: pages were retrieved but model refused",
+      "seconds": 1.34,
+      "agent": {
+        "tools": [],
+        "tools_check": {
+          "expected": [
+            "search_corpus"
+          ],
+          "used": [],
+          "missing": [
+            "search_corpus"
+          ]
+        },
+        "model_calls": 1,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 8,
+      "question": "According to the EU AI Act, what is the administrative fine for wearing a blue shirt?",
+      "category": "grounding",
+      "sub_type": "on-topic-unsupported",
+      "difficulty": "medium",
+      "priority": true,
+      "retrieval": {
+        "expected": [],
+        "found": [],
+        "hit": null,
+        "all_found": null
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 116,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 42,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 18,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 12,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 117,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 89,
+          "score": null
+        },
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 118,
+          "score": null
+        }
+      ],
+      "answer": "The EU AI Act does not specify any administrative fine for wearing a blue shirt. However, it outlines fines for non-compliance with AI regulations. \n\n1. Non-compliance with the prohibition of certain AI practices can result in administrative fines of up to **EUR 1,500,000** (Article 100(2)).\n2. Non-compliance with other requirements or obligations under the regulation can lead to fines of up to **EUR 750,000** (Article 100(3)).\n3. For providers of general-purpose AI models, fines can be up to **3% of their annual total worldwide turnover** in the preceding financial year or **EUR 15,000,000**, whichever is higher (Article 101(1)).\n\nThese fines are determined based on various factors, including the nature and gravity of the infringement (Article 100).",
+      "expected_answer": "I don't have enough information in the provided documents to answer this question.",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 7.34,
+      "agent": {
+        "tools": [
+          "search_corpus",
+          "search_corpus",
+          "get_article",
+          "get_article"
+        ],
+        "tools_check": {
+          "expected": [
+            "search_corpus"
+          ],
+          "used": [
+            "get_article",
+            "search_corpus"
+          ],
+          "missing": []
+        },
+        "model_calls": 4,
+        "stop_reason": "answered"
+      }
+    },
+    {
+      "id": 9,
+      "question": "According to Article 99(3) of the EU AI Act, what is half of the maximum worldwide annual turnover percentage that may be imposed as an administrative fine?",
+      "category": "multi-step",
+      "sub_type": "retrieval-plus-percentage-calculation",
+      "difficulty": "hard",
+      "priority": true,
+      "retrieval": {
+        "expected": [
+          [
+            "eu_ai_act_2024.pdf",
+            115
+          ]
+        ],
+        "found": [
+          [
+            "eu_ai_act_2024.pdf",
+            115
+          ]
+        ],
+        "hit": true,
+        "all_found": true,
+        "first_hit_rank": 1
+      },
+      "top_score": null,
+      "retrieved": [
+        {
+          "source": "eu_ai_act_2024.pdf",
+          "page": 115,
+          "score": null
+        }
+      ],
+      "answer": "Half of the maximum worldwide annual turnover percentage that may be imposed as an administrative fine according to Article 99(3) of the EU AI Act is 3.5% (eu_ai_act_2024.pdf, p. 115).",
+      "expected_answer": "3.5%",
+      "judge": null,
+      "status": "review",
+      "reason": "retrieval hit: check the answer by hand",
+      "seconds": 3.02,
+      "agent": {
+        "tools": [
+          "get_article",
+          "calculator"
+        ],
+        "tools_check": {
+          "expected": [
+            "get_article",
+            "calculator"
+          ],
+          "used": [
+            "calculator",
+            "get_article"
+          ],
+          "missing": []
+        },
+        "model_calls": 3,
+        "stop_reason": "answered"
+      }
+    }
+  ]
+}
