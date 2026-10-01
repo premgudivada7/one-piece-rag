@@ -1,13 +1,21 @@
-# Python environment
+# Python
 .venv/
-.env
-
-# Corpus documents and generated JSON
-data/
-
-# Python cache
 __pycache__/
 *.pyc
 
-# macOS files
+# Secrets: never commit your API key, Slack token or webhook URL
+.env
+
+# Documents, corpus, index, traces and eval results live in Teams, not GitHub
+data/
+
+# Gradio / OS noise
+.gradio/
+flagged/
 .DS_Store
+
+# Tool caches
+.ruff_cache/
+
+# The previous version of the project, kept locally only (it is in the git history)
+old_version/

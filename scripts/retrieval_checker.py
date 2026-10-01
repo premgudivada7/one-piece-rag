@@ -1,119 +1,78 @@
-"""Inspect retrieval for one question.
+"""Shows what retrieval finds for one question, and whether the expected pages came back.
 
-Shows the top-k chunks (source, page, score, text) and, when the
-question is in data/questions.json, whether the expected pages were
-retrieved (✅) or missed (❌).
-
-Usage:
-    python scripts/retrieval_checker.py "What is a high-risk AI system?"
-    python scripts/retrieval_checker.py --id 3        # question 3 of questions.json
-    python scripts/retrieval_checker.py --id 3 -k 5   # only look at the top 5
-
-Cost: one embedding call per run (a tiny fraction of a cent).
+    python scripts/retrieval_checker.py --id q07
+    python scripts/retrieval_checker.py "What does GOVERN 1.1 say?" --compare
 """
-
 import argparse
-import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# ---------- Configuration ----------
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-QUESTIONS_FILE = PROJECT_ROOT / "data" / "questions.json"
-PREVIEW_CHARS = 300
-
-# Let this script use the same retrieve() as the app.
-sys.path.insert(0, str(PROJECT_ROOT / "app"))
-from retrieval import TOP_K, retrieve  # noqa: E402
+from app import config
+from app.chunking import page_label
+from app.evaluation import load_questions, retrieval_check
+from app.retrieval import best_score, exact_terms, is_confident, retrieve, score_name, threshold
 
 
-# ---------- Helpers ----------
-
-def load_questions() -> list[dict]:
-    """Read the evaluation questions."""
-    return json.loads(QUESTIONS_FILE.read_text(encoding="utf-8"))
-
-
-def find_question(text: str, questions: list[dict]) -> dict | None:
-    """Return the questions.json entry with exactly this text, if any."""
-    for entry in questions:
-        if entry["question"].strip().lower() == text.strip().lower():
-            return entry
-    return None
+def find_question(text: str | None, qid: str | None) -> dict | None:
+    try:
+        questions = load_questions()
+    except FileNotFoundError:
+        return None
+    return next((q for q in questions if (qid and q["id"] == qid)
+                 or (text and q["question"].strip().lower() == text.strip().lower())), None)
 
 
-def expected_pages(entry: dict | None) -> set[tuple[str, int]]:
-    """Expected (source, page) pairs, or an empty set if none."""
-    if not entry or not entry.get("expected_chunks"):
-        return set()
-    return {(c["source"], c["page"]) for c in entry["expected_chunks"]}
+def show(question: str, q: dict | None, k: int, mode: str, rerank: bool, width: int):
+    results = retrieve(question, k=k, mode=mode, rerank=rerank)
+    check = retrieval_check(q, results) if q else None
+    expected = set(check["expected"]) if check else set()
+    best = best_score(results)
+    verdict = "confident" if is_confident(results, question) else "WOULD REFUSE"
+    print(f"\n=== {mode}{' + reranking' if rerank else ''}  k={k}  best {score_name(results)} "
+          f"{best if best is None else round(best, 3)} (threshold {threshold(results)}: {verdict})")
+    if exact_terms(question):
+        print(f"    exact terms in the question: {', '.join(sorted(exact_terms(question)))}")
+    for rank, r in enumerate(results, start=1):
+        star = "⭐" if any(r["source"].lower().endswith(s) and p in r["pages"] for s, p in expected) else "  "
+        rerank_text = f"rerank={r['rerank_score']:.2f} " if r.get("rerank_score") is not None else ""
+        print(f"{star} {rank}. [{r['source']} {page_label(r)}] {rerank_text}faiss_cos={r['score']:.3f} "
+              f"search#{r['search_rank']} vec#{r['vector_rank'] or '-'} bm25#{r['bm25_rank'] or '-'} (chunk {r['id']})")
+        print("      " + r["text"][:width].replace("\n", " ") + ("…" if len(r["text"]) > width else ""))
+    if check and check["expected"]:
+        for pair in check["expected"]:
+            print(f"   {'✅' if pair in check['found'] else '❌'} expected {pair[0]} p.{pair[1]}")
+        print(f"   {'HIT' if check['hit'] else 'MISS'} · first expected chunk at rank {check['first_rank'] or '-'}")
+    elif q:
+        print(f"   (no expected_chunks: category {q.get('category')})")
 
 
-# ---------- Main ----------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("question", nargs="?", help="question text")
-    parser.add_argument("--id", type=int, help="index in questions.json (0-based)")
-    parser.add_argument("-k", type=int, default=TOP_K, help="chunks to retrieve")
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("question", nargs="?")
+    parser.add_argument("--id", help="question id from questions.json, e.g. q07")
+    parser.add_argument("--k", type=int, default=config.TOP_K)
+    parser.add_argument("--mode", default=config.RETRIEVAL_MODE, choices=["hybrid", "vector", "bm25"])
+    parser.add_argument("--no-rerank", action="store_true")
+    parser.add_argument("--compare", action="store_true", help="vector only, vector + rerank, hybrid + rerank")
+    parser.add_argument("--width", type=int, default=220, help="characters of each chunk to print")
     args = parser.parse_args()
 
-    questions = load_questions()
-
-    if args.id is not None:
-        entry = questions[args.id]
-        question = entry["question"]
-    elif args.question:
-        question = args.question
-        entry = find_question(question, questions)
-    else:
-        parser.error("give a question or --id")
-
-    expected = expected_pages(entry)
-    results = retrieve(question, k=args.k)
-
-    print(f"\nQuestion: {question}")
-    if entry:
-        print(f"Category: {entry['category']} | Difficulty: {entry['difficulty']}")
-    print(f"Top-k: {args.k}\n")
-
-    # ---- Retrieved chunks ----
-    for rank, chunk in enumerate(results, start=1):
-        key = (chunk["source"], chunk["page"])
-        mark = "✅" if key in expected else "  "
-        preview = chunk["text"][:PREVIEW_CHARS].replace("\n", " ")
-
-        print(f"{mark} [{rank}] {chunk['source']} — page {chunk['page']}"
-              f" — score {chunk['score']:.4f}")
-        print(f"      {preview}…\n")
-
-    # ---- Expected chunks: found or missed ----
-    if not entry:
-        print("Question not found in questions.json, so there is nothing to check.")
+    q = find_question(args.question, args.id)
+    if args.id and not q:
+        sys.exit(f"No question with id {args.id} in data/questions.json")
+    question = args.question or (q["question"] if q else None)
+    if not question:
+        parser.print_help()
         return
-
-    if not expected:
-        print("No expected chunks for this question "
-              f"({entry['category']}): the answer should be a refusal.")
-        print(f"Top score: {results[0]['score']:.4f} "
-              "(a low score suggests the corpus does not cover it)")
-        return
-
-    retrieved = {(c["source"], c["page"]): rank
-                 for rank, c in reversed(list(enumerate(results, start=1)))}
-
-    print("Expected chunks:")
-    for source, page in sorted(expected):
-        rank = retrieved.get((source, page))
-        if rank:
-            print(f"  ✅ {source} page {page} (first found at rank {rank})")
-        else:
-            print(f"  ❌ {source} page {page} (missed)")
-
-    found = sum(1 for key in expected if key in retrieved)
-    print(f"\nFound {found}/{len(expected)} expected pages.")
+    print(f"Q: {question}")
+    if q:
+        print(f"   {q['id']} · {q.get('category')} {q.get('sub_type') or ''} · expected: {q.get('expected_answer')}")
+    runs = ([("vector", False), ("vector", True), ("hybrid", True)] if args.compare
+            else [(args.mode, config.USE_RERANK and not args.no_rerank)])
+    for mode, rerank in runs:
+        show(question, q, args.k, mode, rerank, args.width)
 
 
 if __name__ == "__main__":

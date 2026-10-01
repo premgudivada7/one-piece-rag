@@ -1,10 +1,5 @@
-"""Extract and clean the project's PDF corpus.
-
-Outputs:
-    data/corpus.json — one entry per PDF page
-    data/sample.json — the first 10 entries
-"""
-
+"""Extracts the text of every PDF in data/sources/ into data/corpus.json (one entry per page)
+and data/sample.json (first 10 entries), then prints the corpus statistics."""
 import json
 import re
 from pathlib import Path
@@ -12,8 +7,6 @@ from typing import TypedDict
 
 import pymupdf
 
-
-# ---------- Configuration ----------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -45,8 +38,6 @@ SPLIT_WORD_PATTERN = re.compile(
 )
 
 
-# ---------- Data structure ----------
-
 class CorpusEntry(TypedDict):
     """Required metadata and cleaned text for one PDF page."""
 
@@ -55,8 +46,6 @@ class CorpusEntry(TypedDict):
     char_count: int
     text: str
 
-
-# ---------- Source discovery ----------
 
 def find_pdf_sources(source_dir: Path) -> list[Path]:
     """Find PDFs without silently ignoring unsupported documents."""
@@ -85,8 +74,6 @@ def find_pdf_sources(source_dir: Path) -> list[Path]:
 
     return files
 
-
-# ---------- Text cleaning ----------
 
 def build_vocabulary(sources: list[Path]) -> set[str]:
     """Collect complete word spellings directly from the source PDFs."""
@@ -145,8 +132,6 @@ def clean_block(raw_text: str, in_margin: bool) -> str:
     return " ".join(lines)
 
 
-# ---------- PDF extraction ----------
-
 def extract_page_text(
     page: pymupdf.Page,
     vocabulary: set[str],
@@ -202,8 +187,6 @@ def extract_pdf(
     return entries
 
 
-# ---------- Output ----------
-
 def save_json(entries: list[CorpusEntry], output_path: Path) -> None:
     """Save readable UTF-8 JSON without escaping accented characters."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -242,8 +225,6 @@ def print_statistics(
             f"({entry['char_count']} characters)"
         )
 
-
-# ---------- Main workflow ----------
 
 def main() -> None:
     """Discover sources, clean text, save JSON, and report statistics."""
